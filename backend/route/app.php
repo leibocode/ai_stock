@@ -39,4 +39,14 @@ Route::group('api', function () {
     Route::get('crawl-eastmoney', 'Index/crawlEastmoney');
     Route::get('eastmoney-data', 'Index/getEastmoneyData');
     Route::get('eastmoney-list', 'Index/eastmoneyList');
+
+    // 缠论
+    Route::get('chan-bottom-diverge', 'Index/chanBottomDiverge');
+    Route::get('chan-top-diverge', 'Index/chanTopDiverge');
+    Route::get('chan-first-buy', 'Index/chanFirstBuy');
+    Route::get('chan-second-buy', 'Index/chanSecondBuy');
+    Route::get('chan-third-buy', 'Index/chanThirdBuy');
+    Route::get('chan-hub-shake', 'Index/chanHubShake');
+    Route::get('chan-data', 'Index/chanData');
+    Route::get('calc-chan', 'Index/calcChan');
 });

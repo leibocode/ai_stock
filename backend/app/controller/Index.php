@@ -279,4 +279,84 @@ class Index
         $list = $this->crawler->getDataList();
         return $this->success($list);
     }
+
+    // ==================== 缠论选股API ====================
+
+    // 底背驰
+    public function chanBottomDiverge(Request $request)
+    {
+        $date = $request->get('date', date('Ymd'));
+        $data = $this->indicator->getChanBottomDiverge($date);
+        return $this->success($data);
+    }
+
+    // 顶背驰
+    public function chanTopDiverge(Request $request)
+    {
+        $date = $request->get('date', date('Ymd'));
+        $data = $this->indicator->getChanTopDiverge($date);
+        return $this->success($data);
+    }
+
+    // 一买信号
+    public function chanFirstBuy(Request $request)
+    {
+        $date = $request->get('date', date('Ymd'));
+        $data = $this->indicator->getChanFirstBuy($date);
+        return $this->success($data);
+    }
+
+    // 二买信号
+    public function chanSecondBuy(Request $request)
+    {
+        $date = $request->get('date', date('Ymd'));
+        $data = $this->indicator->getChanSecondBuy($date);
+        return $this->success($data);
+    }
+
+    // 三买信号
+    public function chanThirdBuy(Request $request)
+    {
+        $date = $request->get('date', date('Ymd'));
+        $data = $this->indicator->getChanThirdBuy($date);
+        return $this->success($data);
+    }
+
+    // 中枢震荡
+    public function chanHubShake(Request $request)
+    {
+        $date = $request->get('date', date('Ymd'));
+        $data = $this->indicator->getChanHubShake($date);
+        return $this->success($data);
+    }
+
+    // 获取单只股票缠论数据
+    public function chanData(Request $request)
+    {
+        $tsCode = $request->get('ts_code', '');
+        if (empty($tsCode)) {
+            return $this->error('缺少股票代码');
+        }
+        $data = $this->indicator->getChanData($tsCode);
+        return $this->success($data);
+    }
+
+    // 计算缠论指标
+    public function calcChan(Request $request)
+    {
+        $date = $request->get('date', date('Ymd'));
+        $stocks = Db::table('daily_quotes')
+            ->where('trade_date', $date)
+            ->distinct(true)
+            ->column('ts_code');
+
+        $count = 0;
+        foreach ($stocks as $tsCode) {
+            $history = $this->tushare->getStockHistory($tsCode, 200);
+            if ($this->indicator->calculateChan($tsCode, $history)) {
+                $count++;
+            }
+        }
+        return $this->success(['calculated' => $count]);
+    }
 }

@@ -416,3 +416,45 @@ export const crawlTushare = async (date) => {
 export const getTushareData = async (date) => {
   return api.get('/tushare-data', { params: { date } })
 }
+
+// ==================== 缠论API ====================
+
+// 底背驰
+export const getChanBottomDiverge = async (date) => {
+  return api.get('/chan-bottom-diverge', { params: { date } })
+}
+
+// 顶背驰
+export const getChanTopDiverge = async (date) => {
+  return api.get('/chan-top-diverge', { params: { date } })
+}
+
+// 一买信号
+export const getChanFirstBuy = async (date) => {
+  return api.get('/chan-first-buy', { params: { date } })
+}
+
+// 二买信号
+export const getChanSecondBuy = async (date) => {
+  return api.get('/chan-second-buy', { params: { date } })
+}
+
+// 三买信号
+export const getChanThirdBuy = async (date) => {
+  return api.get('/chan-third-buy', { params: { date } })
+}
+
+// 中枢震荡
+export const getChanHubShake = async (date) => {
+  return api.get('/chan-hub-shake', { params: { date } })
+}
+
+// 获取单只股票缠论数据
+export const getChanData = async (tsCode) => {
+  return api.get('/chan-data', { params: { ts_code: tsCode } })
+}
+
+// 计算缠论指标
+export const calcChan = async (date) => {
+  return api.get('/calc-chan', { params: { date } })
+}

@@ -422,4 +422,541 @@ class IndicatorService
             ->select()
             ->toArray();
     }
+
+    // ==================== 缠论指标计算 ====================
+
+    /**
+     * 计算缠论所有指标
+     */
+    public function calculateChan(string $tsCode, array $history): bool
+    {
+        if (count($history) < 100) {
+            return false;
+        }
+
+        // 按日期正序
+        $history = array_reverse($history);
+
+        // 1. K线包含处理
+        $mergedKlines = $this->mergeKlines($history);
+
+        // 2. 分型识别
+        $fractals = $this->calculateChanFractal($tsCode, $mergedKlines);
+
+        // 3. 笔划分
+        $bis = $this->calculateChanBi($tsCode, $fractals);
+
+        // 4. 线段划分
+        $segments = $this->calculateChanSegment($tsCode, $bis);
+
+        // 5. 中枢识别
+        $this->calculateChanHub($tsCode, $segments);
+
+        return true;
+    }
+
+    /**
+     * K线包含处理
+     * 向上时取高高低高，向下时取低低高低
+     */
+    protected function mergeKlines(array $klines): array
+    {
+        if (count($klines) < 2) {
+            return $klines;
+        }
+
+        $merged = [$klines[0]];
+        $direction = 0; // 0:未知 1:向上 -1:向下
+
+        for ($i = 1; $i < count($klines); $i++) {
+            $prev = end($merged);
+            $curr = $klines[$i];
+
+            // 判断包含关系
+            $isContain = ($curr['high'] <= $prev['high'] && $curr['low'] >= $prev['low']) ||
+                         ($curr['high'] >= $prev['high'] && $curr['low'] <= $prev['low']);
+
+            if ($isContain) {
+                // 确定方向
+                if ($direction == 0) {
+                    $direction = $curr['high'] > $prev['high'] ? 1 : -1;
+                }
+
+                // 合并K线
+                $mergedKey = count($merged) - 1;
+                if ($direction == 1) {
+                    // 向上：取高高低高
+                    $merged[$mergedKey]['high'] = max($prev['high'], $curr['high']);
+                    $merged[$mergedKey]['low'] = max($prev['low'], $curr['low']);
+                } else {
+                    // 向下：取低低高低
+                    $merged[$mergedKey]['high'] = min($prev['high'], $curr['high']);
+                    $merged[$mergedKey]['low'] = min($prev['low'], $curr['low']);
+                }
+            } else {
+                // 更新方向
+                if ($curr['high'] > $prev['high']) {
+                    $direction = 1;
+                } elseif ($curr['low'] < $prev['low']) {
+                    $direction = -1;
+                }
+                $merged[] = $curr;
+            }
+        }
+
+        return $merged;
+    }
+
+    /**
+     * 分型识别
+     * 顶分型：中间K线高点最高
+     * 底分型：中间K线低点最低
+     */
+    protected function calculateChanFractal(string $tsCode, array $klines): array
+    {
+        $fractals = [];
+
+        for ($i = 1; $i < count($klines) - 1; $i++) {
+            $prev = $klines[$i - 1];
+            $curr = $klines[$i];
+            $next = $klines[$i + 1];
+
+            // 顶分型
+            if ($curr['high'] > $prev['high'] && $curr['high'] > $next['high']) {
+                $fractals[] = [
+                    'trade_date' => $curr['trade_date'],
+                    'fractal_type' => 1,
+                    'high' => $curr['high'],
+                    'low' => $curr['low'],
+                ];
+            }
+            // 底分型
+            elseif ($curr['low'] < $prev['low'] && $curr['low'] < $next['low']) {
+                $fractals[] = [
+                    'trade_date' => $curr['trade_date'],
+                    'fractal_type' => -1,
+                    'high' => $curr['high'],
+                    'low' => $curr['low'],
+                ];
+            }
+        }
+
+        // 保存分型数据
+        Db::table('chan_fractal')->where('ts_code', $tsCode)->delete();
+        foreach ($fractals as $f) {
+            Db::table('chan_fractal')->insert([
+                'ts_code' => $tsCode,
+                'trade_date' => $f['trade_date'],
+                'fractal_type' => $f['fractal_type'],
+                'high' => $f['high'],
+                'low' => $f['low'],
+            ]);
+        }
+
+        return $fractals;
+    }
+
+    /**
+     * 笔划分
+     * 连接相邻的顶底分型，至少5根K线
+     */
+    protected function calculateChanBi(string $tsCode, array $fractals): array
+    {
+        if (count($fractals) < 2) {
+            return [];
+        }
+
+        $bis = [];
+        $biIndex = 0;
+        $lastFractal = null;
+
+        foreach ($fractals as $f) {
+            if ($lastFractal === null) {
+                $lastFractal = $f;
+                continue;
+            }
+
+            // 顶底交替
+            if ($f['fractal_type'] != $lastFractal['fractal_type']) {
+                // 向上笔：从底到顶
+                if ($f['fractal_type'] == 1 && $f['high'] > $lastFractal['high']) {
+                    $bis[] = [
+                        'start_date' => $lastFractal['trade_date'],
+                        'end_date' => $f['trade_date'],
+                        'direction' => 1,
+                        'high' => $f['high'],
+                        'low' => $lastFractal['low'],
+                        'bi_index' => $biIndex++,
+                    ];
+                    $lastFractal = $f;
+                }
+                // 向下笔：从顶到底
+                elseif ($f['fractal_type'] == -1 && $f['low'] < $lastFractal['low']) {
+                    $bis[] = [
+                        'start_date' => $lastFractal['trade_date'],
+                        'end_date' => $f['trade_date'],
+                        'direction' => -1,
+                        'high' => $lastFractal['high'],
+                        'low' => $f['low'],
+                        'bi_index' => $biIndex++,
+                    ];
+                    $lastFractal = $f;
+                }
+            }
+            // 同向分型，取极值
+            else {
+                if ($f['fractal_type'] == 1 && $f['high'] > $lastFractal['high']) {
+                    $lastFractal = $f;
+                } elseif ($f['fractal_type'] == -1 && $f['low'] < $lastFractal['low']) {
+                    $lastFractal = $f;
+                }
+            }
+        }
+
+        // 保存笔数据
+        Db::table('chan_bi')->where('ts_code', $tsCode)->delete();
+        foreach ($bis as $bi) {
+            Db::table('chan_bi')->insert([
+                'ts_code' => $tsCode,
+                'start_date' => $bi['start_date'],
+                'end_date' => $bi['end_date'],
+                'direction' => $bi['direction'],
+                'high' => $bi['high'],
+                'low' => $bi['low'],
+                'bi_index' => $bi['bi_index'],
+            ]);
+        }
+
+        return $bis;
+    }
+
+    /**
+     * 线段划分
+     * 至少3笔构成一个线段
+     */
+    protected function calculateChanSegment(string $tsCode, array $bis): array
+    {
+        if (count($bis) < 3) {
+            return [];
+        }
+
+        $segments = [];
+        $segIndex = 0;
+        $segStart = 0;
+
+        for ($i = 2; $i < count($bis); $i++) {
+            $bi1 = $bis[$i - 2];
+            $bi2 = $bis[$i - 1];
+            $bi3 = $bis[$i];
+
+            // 向上线段结束条件：向下笔新低
+            if ($bi1['direction'] == 1 && $bi3['low'] < $bi2['low']) {
+                $segments[] = [
+                    'start_date' => $bis[$segStart]['start_date'],
+                    'end_date' => $bi2['end_date'],
+                    'direction' => 1,
+                    'high' => max(array_column(array_slice($bis, $segStart, $i - $segStart), 'high')),
+                    'low' => min(array_column(array_slice($bis, $segStart, $i - $segStart), 'low')),
+                    'seg_index' => $segIndex++,
+                ];
+                $segStart = $i - 1;
+            }
+            // 向下线段结束条件：向上笔新高
+            elseif ($bi1['direction'] == -1 && $bi3['high'] > $bi2['high']) {
+                $segments[] = [
+                    'start_date' => $bis[$segStart]['start_date'],
+                    'end_date' => $bi2['end_date'],
+                    'direction' => -1,
+                    'high' => max(array_column(array_slice($bis, $segStart, $i - $segStart), 'high')),
+                    'low' => min(array_column(array_slice($bis, $segStart, $i - $segStart), 'low')),
+                    'seg_index' => $segIndex++,
+                ];
+                $segStart = $i - 1;
+            }
+        }
+
+        // 处理最后一个线段
+        if ($segStart < count($bis) - 1) {
+            $lastBis = array_slice($bis, $segStart);
+            $segments[] = [
+                'start_date' => $lastBis[0]['start_date'],
+                'end_date' => end($lastBis)['end_date'],
+                'direction' => $lastBis[0]['direction'],
+                'high' => max(array_column($lastBis, 'high')),
+                'low' => min(array_column($lastBis, 'low')),
+                'seg_index' => $segIndex++,
+            ];
+        }
+
+        // 保存线段数据
+        Db::table('chan_segment')->where('ts_code', $tsCode)->delete();
+        foreach ($segments as $seg) {
+            Db::table('chan_segment')->insert([
+                'ts_code' => $tsCode,
+                'start_date' => $seg['start_date'],
+                'end_date' => $seg['end_date'],
+                'direction' => $seg['direction'],
+                'high' => $seg['high'],
+                'low' => $seg['low'],
+                'seg_index' => $seg['seg_index'],
+            ]);
+        }
+
+        return $segments;
+    }
+
+    /**
+     * 中枢识别
+     * 至少3个线段的重叠区间
+     */
+    protected function calculateChanHub(string $tsCode, array $segments): array
+    {
+        if (count($segments) < 3) {
+            return [];
+        }
+
+        $hubs = [];
+        $hubIndex = 0;
+
+        for ($i = 0; $i <= count($segments) - 3; $i++) {
+            $seg1 = $segments[$i];
+            $seg2 = $segments[$i + 1];
+            $seg3 = $segments[$i + 2];
+
+            // 计算重叠区间
+            $zg = min($seg1['high'], $seg2['high'], $seg3['high']); // 中枢上沿
+            $zd = max($seg1['low'], $seg2['low'], $seg3['low']);    // 中枢下沿
+
+            // 有效中枢：上沿 > 下沿
+            if ($zg > $zd) {
+                $hubs[] = [
+                    'start_date' => $seg1['start_date'],
+                    'end_date' => $seg3['end_date'],
+                    'zg' => $zg,
+                    'zd' => $zd,
+                    'gg' => max($seg1['high'], $seg2['high'], $seg3['high']),
+                    'dd' => min($seg1['low'], $seg2['low'], $seg3['low']),
+                    'hub_index' => $hubIndex++,
+                ];
+                $i += 2; // 跳过已使用的线段
+            }
+        }
+
+        // 保存中枢数据
+        Db::table('chan_hub')->where('ts_code', $tsCode)->delete();
+        foreach ($hubs as $hub) {
+            Db::table('chan_hub')->insert([
+                'ts_code' => $tsCode,
+                'start_date' => $hub['start_date'],
+                'end_date' => $hub['end_date'],
+                'zg' => $hub['zg'],
+                'zd' => $hub['zd'],
+                'gg' => $hub['gg'],
+                'dd' => $hub['dd'],
+                'hub_index' => $hub['hub_index'],
+            ]);
+        }
+
+        return $hubs;
+    }
+
+    // ==================== 缠论选股查询 ====================
+
+    /**
+     * 底背驰信号
+     * 价格创新低但MACD不创新低
+     */
+    public function getChanBottomDiverge(string $date): array
+    {
+        $sql = "SELECT b.ts_code, s.name, s.industry,
+                b.low as bi_low, t.macd_hist,
+                '底背驰' as signal_type
+                FROM chan_bi b
+                JOIN stocks s ON s.ts_code = b.ts_code
+                JOIN technical_indicators t ON t.ts_code = b.ts_code AND t.trade_date = b.end_date
+                WHERE b.direction = -1
+                AND b.end_date = '{$date}'
+                AND b.low < (
+                    SELECT MIN(b2.low) FROM chan_bi b2
+                    WHERE b2.ts_code = b.ts_code
+                    AND b2.direction = -1
+                    AND b2.bi_index < b.bi_index
+                    AND b2.bi_index >= b.bi_index - 4
+                )
+                AND t.macd_hist > (
+                    SELECT MIN(t2.macd_hist) FROM technical_indicators t2
+                    JOIN chan_bi b3 ON b3.ts_code = t2.ts_code AND b3.end_date = t2.trade_date
+                    WHERE b3.ts_code = b.ts_code
+                    AND b3.direction = -1
+                    AND b3.bi_index < b.bi_index
+                    AND b3.bi_index >= b.bi_index - 4
+                )
+                LIMIT 50";
+
+        return Db::query($sql);
+    }
+
+    /**
+     * 顶背驰信号
+     */
+    public function getChanTopDiverge(string $date): array
+    {
+        $sql = "SELECT b.ts_code, s.name, s.industry,
+                b.high as bi_high, t.macd_hist,
+                '顶背驰' as signal_type
+                FROM chan_bi b
+                JOIN stocks s ON s.ts_code = b.ts_code
+                JOIN technical_indicators t ON t.ts_code = b.ts_code AND t.trade_date = b.end_date
+                WHERE b.direction = 1
+                AND b.end_date = '{$date}'
+                AND b.high > (
+                    SELECT MAX(b2.high) FROM chan_bi b2
+                    WHERE b2.ts_code = b.ts_code
+                    AND b2.direction = 1
+                    AND b2.bi_index < b.bi_index
+                    AND b2.bi_index >= b.bi_index - 4
+                )
+                AND t.macd_hist < (
+                    SELECT MAX(t2.macd_hist) FROM technical_indicators t2
+                    JOIN chan_bi b3 ON b3.ts_code = t2.ts_code AND b3.end_date = t2.trade_date
+                    WHERE b3.ts_code = b.ts_code
+                    AND b3.direction = 1
+                    AND b3.bi_index < b.bi_index
+                    AND b3.bi_index >= b.bi_index - 4
+                )
+                LIMIT 50";
+
+        return Db::query($sql);
+    }
+
+    /**
+     * 一买信号
+     * 下跌趋势中第一个底背驰
+     */
+    public function getChanFirstBuy(string $date): array
+    {
+        $sql = "SELECT b.ts_code, s.name, s.industry,
+                b.low as price, h.zd as hub_low,
+                '一买' as buy_type
+                FROM chan_bi b
+                JOIN stocks s ON s.ts_code = b.ts_code
+                JOIN chan_hub h ON h.ts_code = b.ts_code
+                WHERE b.direction = -1
+                AND b.end_date = '{$date}'
+                AND b.low < h.dd
+                AND h.hub_index = (
+                    SELECT MAX(hub_index) FROM chan_hub
+                    WHERE ts_code = b.ts_code AND end_date < b.end_date
+                )
+                LIMIT 50";
+
+        return Db::query($sql);
+    }
+
+    /**
+     * 二买信号
+     * 一买后回抽不创新低
+     */
+    public function getChanSecondBuy(string $date): array
+    {
+        $sql = "SELECT b.ts_code, s.name, s.industry,
+                b.low as price,
+                '二买' as buy_type
+                FROM chan_bi b
+                JOIN stocks s ON s.ts_code = b.ts_code
+                WHERE b.direction = -1
+                AND b.end_date = '{$date}'
+                AND b.bi_index >= 2
+                AND b.low > (
+                    SELECT low FROM chan_bi
+                    WHERE ts_code = b.ts_code AND bi_index = b.bi_index - 2
+                )
+                LIMIT 50";
+
+        return Db::query($sql);
+    }
+
+    /**
+     * 三买信号
+     * 中枢上方回踩不进中枢
+     */
+    public function getChanThirdBuy(string $date): array
+    {
+        $sql = "SELECT b.ts_code, s.name, s.industry,
+                b.low as price, h.zg as hub_top,
+                '三买' as buy_type
+                FROM chan_bi b
+                JOIN stocks s ON s.ts_code = b.ts_code
+                JOIN chan_hub h ON h.ts_code = b.ts_code
+                WHERE b.direction = -1
+                AND b.end_date = '{$date}'
+                AND b.low > h.zg
+                AND h.hub_index = (
+                    SELECT MAX(hub_index) FROM chan_hub
+                    WHERE ts_code = b.ts_code AND end_date < b.start_date
+                )
+                LIMIT 50";
+
+        return Db::query($sql);
+    }
+
+    /**
+     * 中枢震荡
+     * 当前价格在中枢区间内
+     */
+    public function getChanHubShake(string $date): array
+    {
+        $sql = "SELECT d.ts_code, s.name, s.industry,
+                d.close, h.zg, h.zd,
+                ROUND((d.close - h.zd) / (h.zg - h.zd) * 100, 2) as position
+                FROM daily_quotes d
+                JOIN stocks s ON s.ts_code = d.ts_code
+                JOIN chan_hub h ON h.ts_code = d.ts_code
+                WHERE d.trade_date = '{$date}'
+                AND d.close BETWEEN h.zd AND h.zg
+                AND h.hub_index = (
+                    SELECT MAX(hub_index) FROM chan_hub WHERE ts_code = d.ts_code
+                )
+                ORDER BY position ASC
+                LIMIT 50";
+
+        return Db::query($sql);
+    }
+
+    /**
+     * 获取单只股票的缠论数据（用于图表绘制）
+     */
+    public function getChanData(string $tsCode): array
+    {
+        $fractals = Db::table('chan_fractal')
+            ->where('ts_code', $tsCode)
+            ->order('trade_date', 'asc')
+            ->select()
+            ->toArray();
+
+        $bis = Db::table('chan_bi')
+            ->where('ts_code', $tsCode)
+            ->order('bi_index', 'asc')
+            ->select()
+            ->toArray();
+
+        $segments = Db::table('chan_segment')
+            ->where('ts_code', $tsCode)
+            ->order('seg_index', 'asc')
+            ->select()
+            ->toArray();
+
+        $hubs = Db::table('chan_hub')
+            ->where('ts_code', $tsCode)
+            ->order('hub_index', 'asc')
+            ->select()
+            ->toArray();
+
+        return [
+            'fractals' => $fractals,
+            'bis' => $bis,
+            'segments' => $segments,
+            'hubs' => $hubs,
+        ];
+    }
 }

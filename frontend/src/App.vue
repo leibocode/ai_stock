@@ -278,6 +278,92 @@
             </el-row>
           </el-tab-pane>
 
+          <!-- 缠论选股 -->
+          <el-tab-pane label="🔮 缠论选股" name="chan">
+            <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center;">
+              <el-button type="primary" @click="calcChanIndicators" :loading="chanCalcing">
+                计算缠论指标
+              </el-button>
+              <el-button @click="loadChanData">刷新数据</el-button>
+              <span style="color: #909399; font-size: 12px;">
+                提示：需先计算缠论指标才能显示选股结果
+              </span>
+            </div>
+            <el-row :gutter="20">
+              <el-col :span="8">
+                <el-card>
+                  <template #header>📈 一买信号 ({{ chanFirstBuy.length }})</template>
+                  <el-table :data="chanFirstBuy" height="280" stripe size="small">
+                    <el-table-column prop="ts_code" label="代码" width="90" />
+                    <el-table-column prop="name" label="名称" width="70" />
+                    <el-table-column prop="industry" label="行业" width="70" />
+                    <el-table-column prop="price" label="价格" width="60" />
+                  </el-table>
+                </el-card>
+              </el-col>
+              <el-col :span="8">
+                <el-card>
+                  <template #header>📊 二买信号 ({{ chanSecondBuy.length }})</template>
+                  <el-table :data="chanSecondBuy" height="280" stripe size="small">
+                    <el-table-column prop="ts_code" label="代码" width="90" />
+                    <el-table-column prop="name" label="名称" width="70" />
+                    <el-table-column prop="industry" label="行业" width="70" />
+                    <el-table-column prop="price" label="价格" width="60" />
+                  </el-table>
+                </el-card>
+              </el-col>
+              <el-col :span="8">
+                <el-card>
+                  <template #header>🚀 三买信号 ({{ chanThirdBuy.length }})</template>
+                  <el-table :data="chanThirdBuy" height="280" stripe size="small">
+                    <el-table-column prop="ts_code" label="代码" width="90" />
+                    <el-table-column prop="name" label="名称" width="70" />
+                    <el-table-column prop="industry" label="行业" width="70" />
+                    <el-table-column prop="price" label="价格" width="60" />
+                  </el-table>
+                </el-card>
+              </el-col>
+            </el-row>
+            <el-row :gutter="20" style="margin-top: 15px">
+              <el-col :span="8">
+                <el-card>
+                  <template #header>⬇️ 底背驰 ({{ chanBottomDiverge.length }})</template>
+                  <el-table :data="chanBottomDiverge" height="280" stripe size="small">
+                    <el-table-column prop="ts_code" label="代码" width="90" />
+                    <el-table-column prop="name" label="名称" width="70" />
+                    <el-table-column prop="industry" label="行业" width="70" />
+                    <el-table-column prop="bi_low" label="笔低点" width="60" />
+                  </el-table>
+                </el-card>
+              </el-col>
+              <el-col :span="8">
+                <el-card>
+                  <template #header>⬆️ 顶背驰 ({{ chanTopDiverge.length }})</template>
+                  <el-table :data="chanTopDiverge" height="280" stripe size="small">
+                    <el-table-column prop="ts_code" label="代码" width="90" />
+                    <el-table-column prop="name" label="名称" width="70" />
+                    <el-table-column prop="industry" label="行业" width="70" />
+                    <el-table-column prop="bi_high" label="笔高点" width="60" />
+                  </el-table>
+                </el-card>
+              </el-col>
+              <el-col :span="8">
+                <el-card>
+                  <template #header>🔄 中枢震荡 ({{ chanHubShake.length }})</template>
+                  <el-table :data="chanHubShake" height="280" stripe size="small">
+                    <el-table-column prop="ts_code" label="代码" width="90" />
+                    <el-table-column prop="name" label="名称" width="70" />
+                    <el-table-column prop="position" label="位置%" width="60">
+                      <template #default="{ row }">
+                        <span :class="row.position > 50 ? 'text-red' : 'text-green'">{{ row.position }}%</span>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </el-card>
+              </el-col>
+            </el-row>
+          </el-tab-pane>
+
           <!-- 板块资金 -->
           <el-tab-pane label="💰 板块资金" name="money">
             <el-row :gutter="20">
@@ -948,6 +1034,14 @@ import {
   crawlEastmoney,
   crawlTushare,
   getEastmoneyData,
+  getChanBottomDiverge,
+  getChanTopDiverge,
+  getChanFirstBuy,
+  getChanSecondBuy,
+  getChanThirdBuy,
+  getChanHubShake,
+  getChanData,
+  calcChan,
 } from './api/stock'
 
 const currentDate = ref(new Date().toISOString().slice(0, 10).replace(/-/g, ''))
@@ -992,6 +1086,15 @@ const showFullscreen = ref(false)
 const fullscreenType = ref('')
 const fullscreenTitle = ref('')
 const fullscreenData = ref([])
+
+// 缠论数据
+const chanBottomDiverge = ref([])
+const chanTopDiverge = ref([])
+const chanFirstBuy = ref([])
+const chanSecondBuy = ref([])
+const chanThirdBuy = ref([])
+const chanHubShake = ref([])
+const chanCalcing = ref(false)
 
 // 判断是否非交易日 (周末或数据为空)
 const isNonTradingDay = computed(() => {
@@ -1191,6 +1294,43 @@ const loadHistoryReview = async (row) => {
   const dateStr = row.trade_date.replace(/-/g, '')
   currentDate.value = dateStr
   await loadData()
+}
+
+// 加载缠论数据
+const loadChanData = async () => {
+  try {
+    const date = currentDate.value
+    const results = await Promise.all([
+      getChanBottomDiverge(date),
+      getChanTopDiverge(date),
+      getChanFirstBuy(date),
+      getChanSecondBuy(date),
+      getChanThirdBuy(date),
+      getChanHubShake(date),
+    ])
+    chanBottomDiverge.value = results[0] || []
+    chanTopDiverge.value = results[1] || []
+    chanFirstBuy.value = results[2] || []
+    chanSecondBuy.value = results[3] || []
+    chanThirdBuy.value = results[4] || []
+    chanHubShake.value = results[5] || []
+  } catch (err) {
+    console.error('加载缠论数据失败:', err)
+  }
+}
+
+// 计算缠论指标
+const calcChanIndicators = async () => {
+  chanCalcing.value = true
+  try {
+    await calcChan(currentDate.value)
+    await loadChanData()
+    ElMessage.success('缠论指标计算完成')
+  } catch (err) {
+    ElMessage.error('计算失败: ' + err.message)
+  } finally {
+    chanCalcing.value = false
+  }
 }
 
 // 打开全屏查看
