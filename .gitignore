@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Environment files
+.env
+
+# IDE
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
