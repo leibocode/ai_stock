@@ -1,3 +1,5 @@
+import asyncio
+from typing import List, Dict
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +12,37 @@ from app.services.indicator_service import IndicatorService
 from app.utils.cache_decorator import with_cache
 
 router = APIRouter(prefix="", tags=["数据同步"])
+
+# 并发控制：Tushare API有频率限制
+BATCH_SIZE = 50  # 每批处理股票数
+CONCURRENCY = 10  # 并发请求数
+
+
+async def fetch_daily_batch(
+    service: TushareService,
+    stocks: List[Dict],
+    semaphore: asyncio.Semaphore
+) -> List[Dict]:
+    """并发获取一批股票的日线数据"""
+    async def fetch_one(stock: Dict) -> List[Dict]:
+        async with semaphore:
+            ts_code = stock.get("ts_code")
+            try:
+                data = await service.get_daily(ts_code, limit=1)
+                return data if data else []
+            except Exception as e:
+                logger.warning(f"Fetch failed for {ts_code}: {e}")
+                return []
+
+    tasks = [fetch_one(s) for s in stocks]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # 展平结果，过滤异常
+    all_quotes = []
+    for r in results:
+        if isinstance(r, list):
+            all_quotes.extend(r)
+    return all_quotes
 
 
 @router.get("/sync-stocks")
@@ -25,10 +58,10 @@ async def sync_daily(
     date: str = Query(None, description="交易日期YYYYMMDD"),
     db: AsyncSession = Depends(get_db)
 ):
-    """同步日线行情"""
-    from datetime import datetime, timedelta
-    from sqlalchemy import insert, update
+    """同步日线行情 (并发优化版)
 
+    使用asyncio.gather并发获取数据，控制并发数避免API限流
+    """
     service = TushareService()
 
     # 获取股票列表
@@ -37,17 +70,19 @@ async def sync_daily(
         return success({"synced": 0})
 
     synced_count = 0
+    error_count = 0
+    semaphore = asyncio.Semaphore(CONCURRENCY)
 
-    # 逐个同步日线数据
-    for stock in stocks:
-        try:
-            ts_code = stock.get("ts_code")
-            daily_data = await service.get_daily(ts_code, limit=1)
+    # 分批处理
+    for i in range(0, len(stocks), BATCH_SIZE):
+        batch = stocks[i:i + BATCH_SIZE]
 
-            if not daily_data:
-                continue
+        # 并发获取这批股票的日线数据
+        quotes = await fetch_daily_batch(service, batch, semaphore)
 
-            for quote in daily_data:
+        # 批量写入数据库
+        for quote in quotes:
+            try:
                 stmt = (
                     insert(DailyQuote)
                     .values(
@@ -73,13 +108,19 @@ async def sync_daily(
                 )
                 await db.execute(stmt)
                 synced_count += 1
+            except Exception as e:
+                logger.error(f"DB write failed: {e}")
+                error_count += 1
 
-        except Exception as e:
-            logger.error(f"Failed to sync daily for {stock.get('ts_code')}: {e}")
-            continue
+        # 每批提交一次
+        await db.commit()
+        logger.info(f"Batch {i // BATCH_SIZE + 1}: synced {len(quotes)} quotes")
 
-    await db.commit()
-    return success({"synced": synced_count})
+    return success({
+        "synced": synced_count,
+        "errors": error_count,
+        "total_stocks": len(stocks)
+    })
 
 
 @router.get("/calc-indicators")

@@ -121,10 +121,10 @@ async def with_cache(
 
 
 def batch_process_with_window(
-    data: list,
+    data: list[T],
     window_size: int = 100,
-    process_fn: Optional[Callable] = None
-) -> list:
+    process_fn: Optional[Callable[[list[T]], list[T]]] = None
+) -> list[T]:
     """
     分批处理大数据集，避免内存溢出
 
