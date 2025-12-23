@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Query, Depends
-from sqlalchemy import select
+from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 from app.config import get_db
 from app.schemas import success, error
-from app.models import Stock
+from app.models import Stock, DailyQuote
 from app.utils.cache_decorator import with_cache
+from app.core.chan import ChanService
 
 router = APIRouter(prefix="", tags=["缠论"])
 
@@ -258,18 +259,58 @@ async def get_chan_data(
             if not stock:
                 return None
 
-            # 缠论数据结构
-            return {
-                "ts_code": ts_code,
-                "name": stock.name,
-                "fractal": None,         # 最新分型 (顶/底/无)
-                "bi": None,              # 当前笔
-                "segment": None,         # 当前线段
-                "hub": None,             # 当前中枢
-                "buy_signals": [],       # 买点信号列表
-                "sell_signals": [],      # 卖点信号列表
-                "note": "需要实现完整的缠论计算和数据存储"
-            }
+            # 获取K线历史数据 (至少200条)
+            stmt = (
+                select(DailyQuote)
+                .where(DailyQuote.ts_code == ts_code)
+                .order_by(desc(DailyQuote.trade_date))
+                .limit(200)
+            )
+            result = await db.execute(stmt)
+            quotes = result.scalars().all()
+
+            if len(quotes) < 100:
+                return {
+                    "ts_code": ts_code,
+                    "name": stock.name,
+                    "error": f"K线数据不足 ({len(quotes)}条)"
+                }
+
+            # 转换为正序列表
+            klines = [
+                {
+                    "trade_date": q.trade_date,
+                    "open": float(q.open or 0),
+                    "high": float(q.high or 0),
+                    "low": float(q.low or 0),
+                    "close": float(q.close or 0),
+                    "vol": float(q.vol or 0),
+                }
+                for q in reversed(quotes)
+            ]
+
+            # 计算缠论
+            chan_service = ChanService()
+            chan_result = chan_service.calculate(ts_code, klines)
+
+            if not chan_result:
+                return {
+                    "ts_code": ts_code,
+                    "name": stock.name,
+                    "error": "缠论计算失败"
+                }
+
+            # 获取买卖点信号
+            buy_signals = chan_service.get_buy_signals(chan_result)
+            sell_signals = chan_service.get_sell_signals(chan_result)
+
+            # 返回结果
+            result_dict = chan_result.to_dict()
+            result_dict["name"] = stock.name
+            result_dict["buy_signals"] = buy_signals
+            result_dict["sell_signals"] = sell_signals
+
+            return result_dict
 
         chan_data = await with_cache(f"chan_data:{ts_code}", fetch_data, ttl=86400)
 
@@ -286,11 +327,12 @@ async def get_chan_data(
 @router.get("/calc-chan")
 async def calc_chan(
     date: str = Query(None, description="交易日期YYYYMMDD"),
+    limit: int = Query(100, description="处理股票数量"),
     db: AsyncSession = Depends(get_db)
 ):
-    """计算缠论指标 (批量计算所有股票的缠论数据)
+    """计算缠论指标 (批量计算股票的缠论数据)
 
-    该端点计算指定日期所有股票的缠论指标，包括：
+    该端点计算指定日期股票的缠论指标，包括：
     - 分型识别
     - 笔的划分
     - 线段的识别
@@ -301,20 +343,61 @@ async def calc_chan(
         return error("缺少交易日期")
 
     try:
-        # 缠论计算逻辑需要：
-        # 1. 获取所有股票的K线历史数据
-        # 2. 对每只股票计算分型
-        # 3. 识别笔和线段
-        # 4. 确认中枢
-        # 5. 判定买卖点
-        # 6. 存储结果到缓存或数据库
+        # 获取有该日期行情的股票
+        stmt = (
+            select(Stock)
+            .join(DailyQuote, Stock.ts_code == DailyQuote.ts_code)
+            .where(DailyQuote.trade_date == date)
+            .limit(limit)
+        )
+        result = await db.execute(stmt)
+        stocks = result.scalars().all()
+
+        total_stocks = len(stocks)
+        calculated = 0
+        errors = 0
+        chan_service = ChanService()
+
+        for stock in stocks:
+            try:
+                # 获取K线历史
+                stmt = (
+                    select(DailyQuote)
+                    .where(DailyQuote.ts_code == stock.ts_code)
+                    .order_by(desc(DailyQuote.trade_date))
+                    .limit(200)
+                )
+                result = await db.execute(stmt)
+                quotes = result.scalars().all()
+
+                if len(quotes) < 100:
+                    continue
+
+                klines = [
+                    {
+                        "trade_date": q.trade_date,
+                        "open": float(q.open or 0),
+                        "high": float(q.high or 0),
+                        "low": float(q.low or 0),
+                        "close": float(q.close or 0),
+                    }
+                    for q in reversed(quotes)
+                ]
+
+                # 计算缠论
+                chan_result = chan_service.calculate(stock.ts_code, klines)
+                if chan_result:
+                    calculated += 1
+
+            except Exception as e:
+                logger.warning(f"Chan calc failed for {stock.ts_code}: {e}")
+                errors += 1
 
         result_data = {
             "date": date,
-            "total_stocks": 0,
-            "calculated": 0,
-            "errors": 0,
-            "message": "缠论计算需要实现完整的算法模块"
+            "total_stocks": total_stocks,
+            "calculated": calculated,
+            "errors": errors,
         }
 
         return success(result_data)
