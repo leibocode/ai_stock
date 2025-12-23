@@ -148,32 +148,111 @@ async def crawl_eastmoney(
     - 情绪周期计算（基于多因子）
     - 龙头评分（基于涨停和成交额）
     """
+    from app.services.crawler.limit_up import LimitUpCrawler
+    from app.services.crawler.dragon_tiger import DragonTigerCrawler
+    from app.services.crawler.north_flow import NorthFlowCrawler
+    from app.services.crawler.sector_flow import SectorFlowCrawler
+    from app.services.crawler.emotion_cycle import EmotionCycleCalculator
+    from app.services.crawler.leader_score import LeaderScoreCalculator
+    from app.services.cache_service import CacheService
+
     if not date:
         return error("缺少交易日期")
 
+    results = {
+        "date": date,
+        "crawled": [],
+        "errors": [],
+        "data": {}
+    }
+    cache = CacheService()
+
     try:
-        results = {
-            "date": date,
-            "crawled": [],
-            "errors": [],
-            "message": "各爬虫模块正在开发中，当前返回框架结构"
-        }
+        # 1. 涨跌停数据
+        try:
+            limit_crawler = LimitUpCrawler()
+            limit_up, limit_down = await limit_crawler.crawl_limit_up_down(date)
+            results["data"]["limit_up"] = limit_up
+            results["data"]["limit_down"] = limit_down
+            results["crawled"].append("limit_up_down")
 
-        # 这些爬虫模块需要按顺序实现：
-        # 1. LimitUpCrawler - 同花顺涨跌停池
-        # 2. DragonTigerCrawler - 东财龙虎榜
-        # 3. NorthFlowCrawler - 北向资金
-        # 4. SectorFlowCrawler - 板块资金
-        # 5. EmotionCycleCalculator - 情绪周期 (基于涨停、连板等)
-        # 6. LeaderScoreCalculator - 龙头评分 (基于连板、成交额等)
+            # 缓存涨跌停数据
+            await cache.set(f"limit_up:{date}", limit_up, ttl=86400)
+            await cache.set(f"limit_down:{date}", limit_down, ttl=86400)
+        except Exception as e:
+            logger.error(f"Limit up/down crawl failed: {e}")
+            results["errors"].append(f"涨跌停: {str(e)}")
 
-        # TODO: 实现各爬虫模块，按以下步骤：
-        # step1: LimitUpCrawler.crawl_limit_up_down(date)
-        # step2: DragonTigerCrawler.crawl_dragon_tiger(date)
-        # step3: NorthFlowCrawler.crawl_north_flow(date)
-        # step4: SectorFlowCrawler.crawl_sector_flow(date)
-        # step5: EmotionCycleCalculator.calculate(date)
-        # step6: LeaderScoreCalculator.batch_calculate(date)
+        # 2. 龙虎榜
+        try:
+            dragon_crawler = DragonTigerCrawler()
+            dragon_tiger = await dragon_crawler.crawl_dragon_tiger(date)
+            results["data"]["dragon_tiger"] = dragon_tiger
+            results["crawled"].append("dragon_tiger")
+            await cache.set(f"dragon_tiger:{date}", dragon_tiger, ttl=86400)
+        except Exception as e:
+            logger.error(f"Dragon tiger crawl failed: {e}")
+            results["errors"].append(f"龙虎榜: {str(e)}")
+
+        # 3. 北向资金
+        try:
+            north_crawler = NorthFlowCrawler()
+            north_flow = await north_crawler.crawl_north_flow(date)
+            results["data"]["north_flow"] = north_flow
+            results["crawled"].append("north_flow")
+            await cache.set(f"north_flow:{date}", north_flow, ttl=86400)
+        except Exception as e:
+            logger.error(f"North flow crawl failed: {e}")
+            results["errors"].append(f"北向资金: {str(e)}")
+
+        # 4. 板块资金
+        try:
+            sector_crawler = SectorFlowCrawler()
+            sector_flow = await sector_crawler.crawl_sector_flow(date)
+            results["data"]["sector_flow"] = sector_flow
+            results["crawled"].append("sector_flow")
+            await cache.set(f"sector_flow:{date}", sector_flow, ttl=86400)
+        except Exception as e:
+            logger.error(f"Sector flow crawl failed: {e}")
+            results["errors"].append(f"板块资金: {str(e)}")
+
+        # 5. 情绪周期计算
+        try:
+            limit_up = results["data"].get("limit_up", [])
+            limit_down = results["data"].get("limit_down", [])
+
+            if limit_up or limit_down:
+                emotion_calc = EmotionCycleCalculator()
+                emotion = emotion_calc.calculate(limit_up, limit_down)
+                results["data"]["emotion_cycle"] = {
+                    "phase": emotion.phase.value,
+                    "score": emotion.score,
+                    "limit_up_count": emotion.limit_up_count,
+                    "limit_down_count": emotion.limit_down_count,
+                    "max_continuous": emotion.max_continuous,
+                    "strategy": emotion.strategy,
+                }
+                results["crawled"].append("emotion_cycle")
+                await cache.set(f"emotion_cycle:{date}", results["data"]["emotion_cycle"], ttl=86400)
+        except Exception as e:
+            logger.error(f"Emotion cycle calc failed: {e}")
+            results["errors"].append(f"情绪周期: {str(e)}")
+
+        # 6. 龙头评分
+        try:
+            limit_up = results["data"].get("limit_up", [])
+            if limit_up:
+                from dataclasses import asdict
+                leader_calc = LeaderScoreCalculator()
+                leader_scores = leader_calc.batch_calculate(limit_up)
+                # 转换dataclass为dict以便JSON序列化
+                leader_scores_dict = [asdict(ls) for ls in leader_scores]
+                results["data"]["leader_scores"] = leader_scores_dict
+                results["crawled"].append("leader_scores")
+                await cache.set(f"leader_score:{date}", leader_scores_dict, ttl=86400)
+        except Exception as e:
+            logger.error(f"Leader score calc failed: {e}")
+            results["errors"].append(f"龙头评分: {str(e)}")
 
         return success(results)
 
