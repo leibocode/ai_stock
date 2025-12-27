@@ -1,6 +1,7 @@
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from .base import BaseCrawler
 from loguru import logger
+import asyncio
 
 
 class LimitUpCrawler(BaseCrawler):

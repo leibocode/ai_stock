@@ -18,6 +18,94 @@ BATCH_SIZE = 50  # 每批处理股票数
 CONCURRENCY = 10  # 并发请求数
 
 
+# ============================================================================
+# 辅助函数
+# ============================================================================
+
+async def _enrich_leader_score_data(limit_up: List[Dict]) -> List[Dict]:
+    """为龙头评分补充缺失的数据（成交额、换手率、市值）
+
+    Args:
+        limit_up: 涨停股票列表（来自爬虫）
+
+    Returns:
+        补充后的涨停列表
+    """
+    from app.services.tushare_service import TushareService
+
+    if not limit_up:
+        return limit_up
+
+    try:
+        service = TushareService()
+
+        # 并发获取股票的日线数据以补充缺失信息
+        async def fetch_stock_info(stock: Dict) -> Dict:
+            code = stock.get("code", "")
+            if not code:
+                return stock
+
+            try:
+                # 尝试获取该股票的日线数据
+                ts_code = f"{code}.SZ" if code.startswith(("000", "001", "002", "200", "201")) else f"{code}.SH"
+                daily_data = await service.get_daily(ts_code, limit=1)
+
+                if daily_data and len(daily_data) > 0:
+                    day = daily_data[0]
+                    # 补充缺失数据
+                    stock["amount"] = float(day.get("vol", 0)) * float(day.get("close", 1)) / 100000000  # 成交额（亿元）
+                    stock["turnover"] = float(day.get("turnover", 0))  # 换手率（%）
+                    stock["market_cap"] = float(day.get("total_mv", 0)) / 100 if day.get("total_mv") else 100  # 市值（亿元）
+                else:
+                    # 无法获取，使用默认值
+                    stock.setdefault("amount", 0)
+                    stock.setdefault("turnover", 0)
+                    stock.setdefault("market_cap", 100)
+            except Exception as e:
+                logger.debug(f"Failed to fetch info for {code}: {e}")
+                # 使用默认值
+                stock.setdefault("amount", 0)
+                stock.setdefault("turnover", 0)
+                stock.setdefault("market_cap", 100)
+
+            return stock
+
+        # 并发处理（限制并发数以避免API限流）
+        tasks = [fetch_stock_info(stock) for stock in limit_up[:20]]  # 只补充前20个以节省时间
+        enriched = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 过滤异常结果，保留原始数据
+        result = []
+        for i, item in enumerate(enriched):
+            if isinstance(item, dict):
+                result.append(item)
+            elif i < len(limit_up):
+                # 发生异常，使用原始数据
+                limit_up[i].setdefault("amount", 0)
+                limit_up[i].setdefault("turnover", 0)
+                limit_up[i].setdefault("market_cap", 100)
+                result.append(limit_up[i])
+
+        # 补充剩余的股票（不做数据补充）
+        for i in range(20, len(limit_up)):
+            limit_up[i].setdefault("amount", 0)
+            limit_up[i].setdefault("turnover", 0)
+            limit_up[i].setdefault("market_cap", 100)
+            result.append(limit_up[i])
+
+        logger.info(f"Enriched {len([s for s in result if s.get('amount', 0) > 0])} stocks with real data")
+        return result
+
+    except Exception as e:
+        logger.warning(f"Data enrichment failed, using original data: {e}")
+        # 给所有股票添加默认的缺失字段
+        for stock in limit_up:
+            stock.setdefault("amount", 0)
+            stock.setdefault("turnover", 0)
+            stock.setdefault("market_cap", 100)
+        return limit_up
+
+
 async def fetch_daily_batch(
     service: TushareService,
     stocks: List[Dict],
@@ -284,7 +372,17 @@ async def crawl_eastmoney(
         except Exception as e:
             logger.error(f"Emotion cycle calc failed: {e}")
 
-        # 6. 龙头评分
+        # 6. 补充龙头评分的缺失数据（成交额、换手率、市值）
+        try:
+            limit_up = eastmoney_result["limit_up_down"]["limit_up"]
+            if limit_up:
+                # 为每个股票补充 amount、turnover、market_cap
+                limit_up = await _enrich_leader_score_data(limit_up)
+        except Exception as e:
+            logger.warning(f"Failed to enrich leader score data: {e}")
+            # 继续处理，使用原始数据
+
+        # 7. 龙头评分
         try:
             limit_up = eastmoney_result["limit_up_down"]["limit_up"]
             if limit_up:

@@ -137,27 +137,89 @@ class StockScheduler:
         try:
             logger.info("开始爬取东方财富数据...")
 
-            # TODO: 调用各爬虫模块
-            # 步骤（按顺序）：
-            # 1. LimitUpCrawler - 涨跌停池（同花顺）
-            # 2. DragonTigerCrawler - 龙虎榜（东财）
-            # 3. NorthFlowCrawler - 北向资金（东财）
-            # 4. SectorFlowCrawler - 板块资金（东财）
-            # 5. EmotionCycleCalculator - 情绪周期（基于多因子）
-            # 6. LeaderScoreCalculator - 龙头评分（基于涨停和成交额）
-
             today = datetime.now().strftime("%Y%m%d")
+
+            # 直接调用爬虫模块（不需要通过HTTP，直接导入和执行）
+            from app.services.crawler.limit_up import LimitUpCrawler
+            from app.services.crawler.dragon_tiger import DragonTigerCrawler
+            from app.services.crawler.north_flow import NorthFlowCrawler
+            from app.services.crawler.sector_flow import SectorFlowCrawler
+            from app.services.crawler.emotion_cycle import EmotionCycleCalculator
+            from app.services.crawler.leader_score import LeaderScoreCalculator
+            import httpx
+
             result = {
                 "date": today,
-                "crawled_modules": [],
-                "status": "pending",
-                "message": "等待爬虫模块实现"
+                "modules": {}
             }
 
-            logger.info(f"东方财富数据爬取完成: {result}")
+            # 1. 涨跌停数据
+            try:
+                limit_crawler = LimitUpCrawler()
+                limit_up, limit_down = await limit_crawler.crawl_limit_up_down(today)
+                result["modules"]["limit_up"] = f"{len(limit_up)} 涨停, {len(limit_down)} 跌停"
+                logger.info(f"✅ 涨跌停: {len(limit_up)}/{len(limit_down)}")
+            except Exception as e:
+                result["modules"]["limit_up"] = f"失败: {str(e)[:50]}"
+                logger.error(f"❌ 涨跌停爬虫失败: {e}")
+
+            # 2. 龙虎榜
+            try:
+                dragon_crawler = DragonTigerCrawler()
+                dragon_tiger = await dragon_crawler.crawl_dragon_tiger(today)
+                result["modules"]["dragon_tiger"] = f"{len(dragon_tiger)} 条记录"
+                logger.info(f"✅ 龙虎榜: {len(dragon_tiger)}")
+            except Exception as e:
+                result["modules"]["dragon_tiger"] = f"失败: {str(e)[:50]}"
+                logger.error(f"❌ 龙虎榜爬虫失败: {e}")
+
+            # 3. 北向资金
+            try:
+                north_crawler = NorthFlowCrawler()
+                north_flow = await north_crawler.crawl_north_flow(today)
+                result["modules"]["north_flow"] = f"已获取"
+                logger.info(f"✅ 北向资金: {north_flow.get('total', 0)}亿")
+            except Exception as e:
+                result["modules"]["north_flow"] = f"失败: {str(e)[:50]}"
+                logger.error(f"❌ 北向资金爬虫失败: {e}")
+
+            # 4. 板块资金
+            try:
+                sector_crawler = SectorFlowCrawler()
+                sector_flow = await sector_crawler.crawl_sector_flow(today)
+                result["modules"]["sector_flow"] = f"{len(sector_flow)} 个板块"
+                logger.info(f"✅ 板块资金: {len(sector_flow)}")
+            except Exception as e:
+                result["modules"]["sector_flow"] = f"失败: {str(e)[:50]}"
+                logger.error(f"❌ 板块资金爬虫失败: {e}")
+
+            # 5. 情绪周期和龙头评分（基于涨停数据）
+            try:
+                limit_crawler = LimitUpCrawler()
+                limit_up, _ = await limit_crawler.crawl_limit_up_down(today)
+
+                if limit_up:
+                    emotion_calc = EmotionCycleCalculator()
+                    emotion = emotion_calc.calculate(limit_up, [])
+                    result["modules"]["emotion"] = f"{emotion.phase.value} (评分{emotion.score})"
+                    logger.info(f"✅ 情绪周期: {emotion.phase.value}")
+
+                    leader_calc = LeaderScoreCalculator()
+                    leaders = leader_calc.batch_calculate(limit_up)
+                    result["modules"]["leaders"] = f"{len(leaders)} 个龙头"
+                    logger.info(f"✅ 龙头评分: {len(leaders)}")
+            except Exception as e:
+                result["modules"]["emotion"] = f"失败: {str(e)[:50]}"
+                logger.error(f"❌ 情绪周期/龙头评分失败: {e}")
+
+            # 缓存完整结果
+            cache = CacheService()
+            await cache.set(f"eastmoney_daily:{today}", result, ttl=86400)
+
+            logger.info(f"✅ 东方财富数据爬取完成: {result}")
 
         except Exception as e:
-            logger.error(f"东方财富数据爬取失败: {e}", exc_info=True)
+            logger.error(f"❌ 东方财富数据爬取失败: {e}", exc_info=True)
 
     async def _cache_warmup_wrapper(self):
         """
