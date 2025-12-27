@@ -1,0 +1,13 @@
+[project]
+name = "ai-stock"
+version = "2.0.0"
+description = "基于情绪周期理论的A股复盘分析系统 (Python FastAPI)"
+requires-python = ">=3.8"
+
+[tool.poetry]
+name = "ai-stock"
+version = "2.0.0"
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"

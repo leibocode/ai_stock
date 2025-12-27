@@ -2,88 +2,90 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## 项目概述
 
-AI Stock is a Chinese A-share stock review and analysis system based on sentiment cycle theory. It integrates data from Tushare, Eastmoney (东方财富), and 10jqka (同花顺) to provide multi-dimensional stock screening and market analysis.
+基于情绪周期理论的A股复盘分析系统，整合东方财富、同花顺、Tushare数据，提供多维度选股和市场分析。
 
-## Common Commands
+## 常用命令
 
-### Frontend (Vue 3 + Vite)
-```bash
-cd frontend
-npm install          # Install dependencies
-npm run dev          # Start dev server on port 3000
-npm run build        # Production build
-```
-
-### Backend PHP (ThinkPHP 6)
+### 后端 (ThinkPHP 6)
 ```bash
 cd backend
-composer install     # Install dependencies
-php think run        # Start dev server
-php -S localhost:8000 -t public  # Alternative server
+composer install              # 安装依赖
+php think run                 # 启动开发服务器
+php -S localhost:8000 -t public  # 备选启动方式
 ```
 
-### Database
+### 前端 (Vue 3 + Vite)
 ```bash
-mysql -u root -p < database/schema.sql    # Initialize database
-mysql -u root -p < database/migrate_chan.sql  # Chan theory migration
+cd frontend
+npm install                   # 安装依赖
+npm run dev                   # 启动开发服务器
+npm run build                 # 构建生产版本
 ```
 
-## Architecture
+### 数据库
+```bash
+mysql -u root -p < database/schema.sql  # 初始化数据库结构
+```
 
-### Data Flow
-Frontend (port 3000) -> Vite proxy -> Backend API (port 8000) -> MySQL + External APIs (Tushare/Eastmoney)
+## 架构设计
 
-### Backend Structure (PHP - `backend/`)
-- `app/controller/Index.php` - Main API controller, handles all `/api/*` routes
-- `app/service/` - Business logic (currently empty, logic in controller)
-- `services/TushareService.php` - Tushare API integration for stock data
-- `services/IndicatorService.php` - Technical indicator calculations (RSI, MACD, KDJ, Bollinger)
-- `services/Database.php` - Database connection wrapper
-- `route/app.php` - Route definitions mapping URLs to controller methods
+### 后端核心文件
+- `backend/app/controller/Index.php` - API控制器，所有接口入口
+- `backend/app/service/EastmoneyCrawler.php` - 东财数据爬虫（龙虎榜、北向资金、板块数据）
+- `backend/app/service/IndicatorService.php` - 技术指标计算（RSI、MACD、KDJ、缠论）
+- `backend/app/service/TushareService.php` - Tushare API封装
+- `backend/services/` - 独立服务模块（Database.php, IndicatorService.php, TushareService.php）
+- `backend/route/app.php` - 路由配置
+- `backend/api/index.php` - API入口
 
-### Backend Structure (Python - `backend-python/`)
-- `app/core/chan/` - Chan theory (缠论) implementation:
-  - `fractal.py` - Top/bottom fractal detection
-  - `bi.py` - Bi (笔) stroke calculation
-  - `segment.py` - Segment (线段) calculation
-  - `hub.py` - Hub/pivot (中枢) calculation
-  - `chan_service.py` - Chan theory orchestration service
-- `app/core/indicators/rsi.py` - RSI indicator
-- `app/services/tushare_service.py` - Tushare API client
-- `app/services/cache_service.py` - Data caching
+### 前端核心文件
+- `frontend/src/App.vue` - 主组件，包含所有UI和业务逻辑
+- `frontend/src/api/` - API接口封装
 
-### Frontend Structure (`frontend/`)
-- `src/App.vue` - Single large component containing all UI (74KB monolith)
-- `src/api/stock.js` - API client with all endpoint definitions
-- `src/api/mock.js` - Mock data for development
+### 数据库表
+- `stocks` - 股票基础信息
+- `daily_quotes` - 日线行情
+- `technical_indicators` - 技术指标（RSI、MACD、KDJ、布林带）
+- `industry_flow` - 行业资金流向
+- `review_records` - 复盘记录
+- 缠论表：`chan_fractal`(分型)、`chan_bi`(笔)、`chan_segment`(线段)、`chan_hub`(中枢)
 
-### Database Tables (MySQL)
-Core: `stocks`, `daily_quotes`, `technical_indicators`, `industry_flow`, `review_records`
-Chan theory: `chan_fractal`, `chan_bi`, `chan_segment`, `chan_hub`
+## API路由分组
 
-## API Patterns
+### 行情数据
+`/api/volume-top`, `/api/bottom-volume`, `/api/top-volume`, `/api/counter-trend`, `/api/limit-up`, `/api/limit-down`
 
-All APIs are GET requests with optional `date` query parameter (format: YYYY-MM-DD). Key endpoints:
+### 技术指标
+`/api/oversold`, `/api/kdj-bottom`, `/api/macd-golden`, `/api/breakout`, `/api/gap-up`, `/api/gap-down`
 
-- Market data: `/api/volume-top`, `/api/limit-up`, `/api/limit-down`
-- Technical: `/api/oversold`, `/api/kdj-bottom`, `/api/macd-golden`, `/api/breakout`
-- Capital flow: `/api/north-buy`, `/api/margin-buy`, `/api/dragon-tiger`
-- Chan theory: `/api/chan-data`, `/api/chan-first-buy`, `/api/chan-second-buy`
-- Sync: `/api/sync-daily`, `/api/calc-indicators`, `/api/crawl-eastmoney`
+### 资金流向
+`/api/industry-hot`, `/api/north-buy`, `/api/margin-buy`, `/api/dragon-tiger`
 
-## Domain Concepts
+### 缠论
+`/api/chan-bottom-diverge`, `/api/chan-top-diverge`, `/api/chan-first-buy`, `/api/chan-second-buy`, `/api/chan-third-buy`, `/api/chan-hub-shake`, `/api/calc-chan`
 
-### Sentiment Cycle (情绪周期)
-Five phases: 高潮期 (climax) -> 退潮期 (ebb) -> 冰点期 (freezing) -> 回暖期 (recovery) -> 修复期 (repair)
+### 复盘与同步
+`GET/POST /api/review`, `/api/review-history`, `/api/sync-stocks`, `/api/sync-daily`, `/api/calc-indicators`, `/api/crawl-eastmoney`
 
-Determined by: limit-up count (涨停数), consecutive board height (连板高度), advance/decline ratio (涨跌比), board-break rate (炸板率)
+## 业务逻辑
 
-### Chan Theory (缠论)
-Technical analysis framework using: fractals (分型), strokes/bi (笔), segments (线段), and hubs/pivots (中枢) to identify buy/sell points.
+### 情绪周期
+市场分为五阶段循环：高潮期 → 退潮期 → 冰点期 → 回暖期 → 修复期。判断指标：涨停数(40%)、连板高度(20%)、涨跌比(20%)、炸板率(20%)。
 
-## Configuration
+### 多指标共振
+跟踪12项指标（涨停、连板、龙头、弱转强、北向、放量、MACD金叉、KDJ底部、突破等），命中≥3个为重点关注。
 
-- Backend: Copy `.env.example` to `.env`, configure MySQL and Tushare token
-- Frontend: Proxy configured in `vite.config.js` to forward `/api` to backend
+### 龙头评分
+评分维度：连板数(0-50)、封板时间(0-20)、开板次数(0-20)、成交额(0-10)、换手率(0-10)。
+
+## 配置文件
+
+后端需配置 `.env` 文件，包含数据库连接和 Tushare Token。
+
+## 数据来源
+
+- Tushare：股票行情、技术指标
+- 东方财富：龙虎榜、北向资金、板块数据
+- 同花顺：涨停池、连板数据

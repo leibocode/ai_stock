@@ -1,0 +1,3 @@
+﻿ts_code,name,fractal_count,bi_count,segment_count,hub_count,trend,kline_count,latest_price,hub_high,hub_low,signal,price_position
+600104.SH,上汽集团,95,82,78,77,up,200,164.3041472270342,172.10886566349367,166.3836921826511,SELL (Below Hub),below
+600125.SH,铁流股份,100,90,86,85,down,200,102.21773337242676,109.47041084471451,106.40045645538805,SELL (Below Hub),below

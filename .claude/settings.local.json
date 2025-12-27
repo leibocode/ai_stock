@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(curl:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(python:*)",
+      "Bash(ls:*)",
+      "Bash(python3:*)",
+      "Bash(venv_sqliteScriptspip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/)",
+      "Bash(\"venv_sqlite\\\\Scripts\\\\pip\" install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/)",
+      "Bash(\"venv_sqlite\\\\Scripts\\\\pip\" install fastapi uvicorn sqlalchemy aiomysql pydantic pydantic-settings python-dotenv loguru httpx pandas aiosqlite -i https://mirrors.aliyun.com/pypi/simple/)",
+      "Bash(\"venv_sqlite\\\\Scripts\\\\pip\" install apscheduler beautifulsoup4 lxml requests -i https://mirrors.aliyun.com/pypi/simple/ -q)",
+      "Bash(netstat:*)",
+      "Bash(findstr :8000)",
+      "Bash(taskkill:*)",
+      "Bash(timeout /t 2)",
+      "Bash(\"venv_sqlite\\\\Scripts\\\\python\" init_db.py)"
+    ]
+  }
+}

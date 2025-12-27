@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: ai_stock_mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: ai_stock
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../database/schema.sql:/docker-entrypoint-initdb.d/init.sql
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai_stock_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  backend:
+    build: .
+    container_name: ai_stock_backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: mysql+aiomysql://root:root123@mysql/ai_stock
+      REDIS_URL: redis://redis:6379/0
+      TUSHARE_TOKEN: your_token_here
+      DEBUG: "False"
+    depends_on:
+      - mysql
+      - redis
+    volumes:
+      - ./app:/app/app
+
+volumes:
+  mysql_data:
+  redis_data:

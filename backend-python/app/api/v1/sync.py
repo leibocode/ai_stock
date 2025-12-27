@@ -136,18 +136,46 @@ async def calc_indicators(
 
 @router.get("/crawl-eastmoney")
 async def crawl_eastmoney(
-    date: str = Query(None, description="交易日期YYYYMMDD")
+    date: str = Query(None, description="交易日期YYYYMMDD"),
+    source: str = Query("eastmoney", description="数据源: eastmoney|php")
 ):
-    """爬取东方财富数据 (龙虎榜、北向资金、板块资金、龙头评分、情绪周期等)
+    """爬取东方财富完整数据 (涵盖前端所有需要的模块)
 
-    该端点协调以下爬虫和计算模块：
-    - 涨跌停池（同花顺）
-    - 龙虎榜（东方财富）
-    - 北向资金（东方财富）
-    - 板块资金（东方财富）
-    - 情绪周期计算（基于多因子）
-    - 龙头评分（基于涨停和成交额）
+    返回数据包含：
+    - limit_up_down: 涨跌停数据
+    - dragon_tiger: 龙虎榜
+    - north_flow: 北向资金（含持仓TOP10）
+    - sector_flow: 板块资金流向
+    - emotion_cycle: 情绪周期
+    - leader_stocks: 龙头股评分
+
+    参数：
+    - source: "php" 调用PHP后端 | "eastmoney" 直接爬取（推荐用PHP）
     """
+    import httpx
+
+    if not date:
+        return error("缺少交易日期")
+
+    # 优先尝试从PHP后端获取（更稳定）
+    if source == "php":
+        try:
+            logger.info(f"Fetching eastmoney data from PHP backend for {date}")
+            php_url = f"http://127.0.0.1:8000/api/crawlEastmoney?date={date}"
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.get(php_url)
+                if resp.status_code == 200:
+                    php_data = resp.json()
+                    if isinstance(php_data, dict) and php_data.get("code") == 0:
+                        logger.info(f"Successfully fetched eastmoney data from PHP backend")
+                        return success(php_data.get("data", {}))
+                    elif isinstance(php_data, dict) and not php_data.get("code"):
+                        # PHP直接返回数据结构
+                        return success(php_data)
+        except Exception as e:
+            logger.warning(f"Failed to fetch from PHP backend: {e}, falling back to direct crawl")
+
+    # 降级到直接爬取
     from app.services.crawler.limit_up import LimitUpCrawler
     from app.services.crawler.dragon_tiger import DragonTigerCrawler
     from app.services.crawler.north_flow import NorthFlowCrawler
@@ -156,106 +184,145 @@ async def crawl_eastmoney(
     from app.services.crawler.leader_score import LeaderScoreCalculator
     from app.services.cache_service import CacheService
 
-    if not date:
-        return error("缺少交易日期")
-
-    results = {
+    eastmoney_result = {
         "date": date,
-        "crawled": [],
-        "errors": [],
-        "data": {}
+        "crawl_time": None,
+        "limit_up_down": {
+            "limit_up_count": 0,
+            "limit_down_count": 0,
+            "limit_up": [],
+            "limit_down": [],
+        },
+        "dragon_tiger": [],
+        "north_flow": {
+            "hk_to_sh": 0,
+            "hk_to_sz": 0,
+            "total": 0,
+            "top_holdings": [],
+        },
+        "sector_flow": [],
+        "emotion_cycle": {},
+        "leader_stocks": {
+            "top_leader": None,
+            "leaders": [],
+        }
     }
+
     cache = CacheService()
 
     try:
+        from datetime import datetime
+        eastmoney_result["crawl_time"] = datetime.now().isoformat()
+
         # 1. 涨跌停数据
         try:
             limit_crawler = LimitUpCrawler()
             limit_up, limit_down = await limit_crawler.crawl_limit_up_down(date)
-            results["data"]["limit_up"] = limit_up
-            results["data"]["limit_down"] = limit_down
-            results["crawled"].append("limit_up_down")
+            eastmoney_result["limit_up_down"]["limit_up"] = limit_up
+            eastmoney_result["limit_up_down"]["limit_down"] = limit_down
+            eastmoney_result["limit_up_down"]["limit_up_count"] = len(limit_up)
+            eastmoney_result["limit_up_down"]["limit_down_count"] = len(limit_down)
 
-            # 缓存涨跌停数据
+            # 缓存
             await cache.set(f"limit_up:{date}", limit_up, ttl=86400)
             await cache.set(f"limit_down:{date}", limit_down, ttl=86400)
+            logger.info(f"Crawled {len(limit_up)} limit up, {len(limit_down)} limit down")
         except Exception as e:
             logger.error(f"Limit up/down crawl failed: {e}")
-            results["errors"].append(f"涨跌停: {str(e)}")
 
         # 2. 龙虎榜
         try:
             dragon_crawler = DragonTigerCrawler()
             dragon_tiger = await dragon_crawler.crawl_dragon_tiger(date)
-            results["data"]["dragon_tiger"] = dragon_tiger
-            results["crawled"].append("dragon_tiger")
+            eastmoney_result["dragon_tiger"] = dragon_tiger
             await cache.set(f"dragon_tiger:{date}", dragon_tiger, ttl=86400)
+            logger.info(f"Crawled {len(dragon_tiger)} dragon tiger records")
         except Exception as e:
             logger.error(f"Dragon tiger crawl failed: {e}")
-            results["errors"].append(f"龙虎榜: {str(e)}")
 
         # 3. 北向资金
         try:
             north_crawler = NorthFlowCrawler()
             north_flow = await north_crawler.crawl_north_flow(date)
-            results["data"]["north_flow"] = north_flow
-            results["crawled"].append("north_flow")
+            eastmoney_result["north_flow"] = north_flow
             await cache.set(f"north_flow:{date}", north_flow, ttl=86400)
+            logger.info(f"Crawled north flow: {north_flow.get('total', 0)}亿")
         except Exception as e:
             logger.error(f"North flow crawl failed: {e}")
-            results["errors"].append(f"北向资金: {str(e)}")
 
         # 4. 板块资金
         try:
             sector_crawler = SectorFlowCrawler()
             sector_flow = await sector_crawler.crawl_sector_flow(date)
-            results["data"]["sector_flow"] = sector_flow
-            results["crawled"].append("sector_flow")
+            eastmoney_result["sector_flow"] = sector_flow
             await cache.set(f"sector_flow:{date}", sector_flow, ttl=86400)
+            logger.info(f"Crawled {len(sector_flow)} sector flow records")
         except Exception as e:
             logger.error(f"Sector flow crawl failed: {e}")
-            results["errors"].append(f"板块资金: {str(e)}")
 
         # 5. 情绪周期计算
         try:
-            limit_up = results["data"].get("limit_up", [])
-            limit_down = results["data"].get("limit_down", [])
+            limit_up = eastmoney_result["limit_up_down"]["limit_up"]
+            limit_down = eastmoney_result["limit_up_down"]["limit_down"]
 
             if limit_up or limit_down:
                 emotion_calc = EmotionCycleCalculator()
                 emotion = emotion_calc.calculate(limit_up, limit_down)
-                results["data"]["emotion_cycle"] = {
+                eastmoney_result["emotion_cycle"] = {
                     "phase": emotion.phase.value,
                     "score": emotion.score,
                     "limit_up_count": emotion.limit_up_count,
                     "limit_down_count": emotion.limit_down_count,
                     "max_continuous": emotion.max_continuous,
                     "strategy": emotion.strategy,
+                    "phase_desc": _get_phase_desc(emotion.phase.value),
+                    "indicators": [],
+                    "continuous_stats": {},
                 }
-                results["crawled"].append("emotion_cycle")
-                await cache.set(f"emotion_cycle:{date}", results["data"]["emotion_cycle"], ttl=86400)
+                await cache.set(f"emotion_cycle:{date}", eastmoney_result["emotion_cycle"], ttl=86400)
+                logger.info(f"Emotion cycle: {emotion.phase.value} (score: {emotion.score})")
         except Exception as e:
             logger.error(f"Emotion cycle calc failed: {e}")
-            results["errors"].append(f"情绪周期: {str(e)}")
 
         # 6. 龙头评分
         try:
-            limit_up = results["data"].get("limit_up", [])
+            limit_up = eastmoney_result["limit_up_down"]["limit_up"]
             if limit_up:
                 from dataclasses import asdict
                 leader_calc = LeaderScoreCalculator()
                 leader_scores = leader_calc.batch_calculate(limit_up)
-                # 转换dataclass为dict以便JSON序列化
                 leader_scores_dict = [asdict(ls) for ls in leader_scores]
-                results["data"]["leader_scores"] = leader_scores_dict
-                results["crawled"].append("leader_scores")
-                await cache.set(f"leader_score:{date}", leader_scores_dict, ttl=86400)
+
+                # 找出top leader
+                if leader_scores_dict:
+                    leader_scores_dict.sort(key=lambda x: x.get("score", 0), reverse=True)
+                    top_leader = leader_scores_dict[0] if leader_scores_dict else None
+                    eastmoney_result["leader_stocks"]["top_leader"] = top_leader
+                    eastmoney_result["leader_stocks"]["leaders"] = leader_scores_dict[:20]
+
+                await cache.set(f"leader_score:{date}", eastmoney_result["leader_stocks"], ttl=86400)
+                logger.info(f"Calculated leader scores for {len(leader_scores_dict)} stocks")
         except Exception as e:
             logger.error(f"Leader score calc failed: {e}")
-            results["errors"].append(f"龙头评分: {str(e)}")
 
-        return success(results)
+        # 缓存完整的东财数据
+        await cache.set(f"eastmoney_data:{date}", eastmoney_result, ttl=86400)
+        logger.info(f"Eastmoney crawl completed for {date}")
+
+        return success(eastmoney_result)
 
     except Exception as e:
         logger.error(f"Failed to crawl eastmoney data: {e}")
         return error(f"爬虫执行失败: {str(e)}")
+
+
+def _get_phase_desc(phase: str) -> str:
+    """获取阶段描述"""
+    phases = {
+        "冰点期": "市场处于冰点，风险大，建议观望",
+        "回暖期": "市场开始回暖，谨慎关注",
+        "修复期": "市场修复，逐步建仓",
+        "高潮期": "市场高潮，风险较大，适当减仓",
+        "退潮期": "市场退潮，继续减仓",
+    }
+    return phases.get(phase, "未知阶段")

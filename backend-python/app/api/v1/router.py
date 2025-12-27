@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from . import market, limit, fund_flow, pattern, review, sync, crawler, chan, scheduler
+from . import market, limit, fund_flow, pattern, review, sync, crawler, chan, scheduler, trend
 
 # 创建API路由聚合器
 api_router = APIRouter()
@@ -13,6 +13,7 @@ api_router.include_router(review.router)
 api_router.include_router(sync.router)
 api_router.include_router(crawler.router)
 api_router.include_router(chan.router)
-api_router.include_router(scheduler.router)  # 定时任务管理 API
+api_router.include_router(trend.router)           # 新增：趋势分析 API
+api_router.include_router(scheduler.router)       # 定时任务管理 API
 
 __all__ = ["api_router"]

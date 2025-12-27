@@ -19,6 +19,70 @@ def subtract_days(date_str: str, days: int) -> str:
     return new_date.strftime("%Y%m%d")
 
 
+@router.get("/counter-trend")
+async def get_counter_trend(
+    date: str = Query(None, description="交易日期YYYYMMDD"),
+    db: AsyncSession = Depends(get_db)
+):
+    """逆势上涨股票 (大盘跌但个股涨)
+
+    逆势股：大盘下跌时仍然上涨的股票
+    通常代表强势个股或有主力资金介入
+    """
+    if not date:
+        return error("缺少交易日期")
+
+    try:
+        async def fetch_data():
+            # 查询当日所有股票行情
+            stmt = (
+                select(DailyQuote, Stock)
+                .join(Stock, DailyQuote.ts_code == Stock.ts_code)
+                .where(DailyQuote.trade_date == date)
+            )
+            result = await db.execute(stmt)
+            rows = result.all()
+
+            if not rows:
+                return []
+
+            # 计算市场平均涨跌幅
+            all_pct_chg = [float(quote.pct_chg or 0) for quote, _ in rows]
+            market_avg = sum(all_pct_chg) / len(all_pct_chg) if all_pct_chg else 0
+
+            # 筛选逆势股：大盘跌（市场平均<0）但个股涨
+            counter_trend_stocks = []
+            for quote, stock in rows:
+                pct_chg = float(quote.pct_chg or 0)
+                # 市场下跌时，个股上涨
+                if market_avg < 0 and pct_chg > 0:
+                    counter_trend_stocks.append({
+                        "ts_code": quote.ts_code,
+                        "name": stock.name,
+                        "industry": stock.industry or "未分类",
+                        "close": float(quote.close or 0),
+                        "pct_chg": pct_chg,
+                        "vol": float(quote.vol or 0),
+                        "amount": float(quote.amount or 0),
+                    })
+
+            # 按涨幅排序
+            counter_trend_stocks.sort(key=lambda x: x['pct_chg'], reverse=True)
+
+            return {
+                "date": date,
+                "market_avg": round(market_avg, 2),
+                "counter_trend_stocks": counter_trend_stocks[:50]
+            }
+
+        data = await with_cache(f"counter_trend:{date}", fetch_data, ttl=86400)
+        return success(data)
+
+    except Exception as e:
+        logger.error(f"Failed to get counter trend: {e}")
+        return error(f"获取失败: {str(e)}")
+
+
 @router.get("/breakout")
 async def get_breakout(
     date: str = Query(None, description="交易日期YYYYMMDD"),

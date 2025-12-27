@@ -77,32 +77,77 @@ class IndicatorService
         return ['rsi6' => $rsi6, 'rsi12' => $rsi12];
     }
 
-    // MACD计算
+    // MACD计算 - 正确的三线计算
     protected function calculateMACD(array $closes): array
     {
-        $ema12 = $this->calculateEMA($closes, 12);
-        $ema26 = $this->calculateEMA($closes, 26);
-        $dif = $ema12 - $ema26;
+        if (count($closes) < 26) {
+            return ['macd' => 0, 'signal' => 0, 'hist' => 0];
+        }
 
-        // 简化处理
-        $signal = $dif * 0.8;
-        $hist = $dif - $signal;
+        // 计算所有DIF值（为了计算DEA）
+        $difs = [];
+        $ema12Values = $this->calculateEMAArray($closes, 12);
+        $ema26Values = $this->calculateEMAArray($closes, 26);
+
+        for ($i = 0; $i < count($ema12Values); $i++) {
+            $difs[] = $ema12Values[$i] - $ema26Values[$i];
+        }
+
+        // 最后一个DIF
+        $dif = end($difs);
+
+        // DEA是DIF的9日EMA
+        $dea = $this->calculateEMA($difs, 9);
+
+        // MACD柱 = DIF - DEA
+        $hist = $dif - $dea;
 
         return [
             'macd' => round($dif, 4),
-            'signal' => round($signal, 4),
+            'signal' => round($dea, 4),
             'hist' => round($hist, 4),
         ];
     }
 
-    // EMA计算
+    // EMA计算 - 返回完整数组
+    protected function calculateEMAArray(array $data, int $period): array
+    {
+        if (count($data) < $period) {
+            return $data;
+        }
+
+        $result = [];
+        $k = 2 / ($period + 1);
+
+        // 初始EMA = 前period个数据的简单平均
+        $ema = array_sum(array_slice($data, 0, $period)) / $period;
+        $result[] = $ema;
+
+        // 后续EMA = 当前价格 * k + 前EMA * (1-k)
+        for ($i = $period; $i < count($data); $i++) {
+            $ema = $data[$i] * $k + $ema * (1 - $k);
+            $result[] = $ema;
+        }
+
+        return $result;
+    }
+
+    // EMA计算 - 返回单个值（兼容旧方法）
     protected function calculateEMA(array $data, int $period): float
     {
+        if (count($data) < $period) {
+            return end($data);
+        }
+
         $k = 2 / ($period + 1);
-        $ema = $data[0];
-        for ($i = 1; $i < count($data); $i++) {
+        // 初始EMA = 前period个数据的简单平均
+        $ema = array_sum(array_slice($data, 0, $period)) / $period;
+
+        // 后续EMA计算
+        for ($i = $period; $i < count($data); $i++) {
             $ema = $data[$i] * $k + $ema * (1 - $k);
         }
+
         return $ema;
     }
 
@@ -195,7 +240,7 @@ class IndicatorService
     // 底部放量股票
     public function getBottomVolumeStocks(string $date): array
     {
-        // 量比>3，价格位置<30%
+        // 量比>3，价格位置<30% - 使用参数绑定防止注入
         $sql = "SELECT d.ts_code, s.name, s.industry,
                 d.vol / avg_vol.avg_vol as volume_ratio,
                 ((d.close - price_range.min_price) / (price_range.max_price - price_range.min_price)) * 100 as price_position,
@@ -205,27 +250,27 @@ class IndicatorService
                 JOIN (
                     SELECT ts_code, AVG(vol) as avg_vol
                     FROM daily_quotes
-                    WHERE trade_date <= '{$date}'
+                    WHERE trade_date <= ?
                     GROUP BY ts_code
                 ) avg_vol ON avg_vol.ts_code = d.ts_code
                 JOIN (
                     SELECT ts_code, MIN(low) as min_price, MAX(high) as max_price
                     FROM daily_quotes
-                    WHERE trade_date <= '{$date}'
+                    WHERE trade_date <= ?
                     GROUP BY ts_code
                 ) price_range ON price_range.ts_code = d.ts_code
-                WHERE d.trade_date = '{$date}'
+                WHERE d.trade_date = ?
                 HAVING volume_ratio > 3 AND price_position < 30
                 ORDER BY volume_ratio DESC
                 LIMIT 50";
 
-        return Db::query($sql);
+        return Db::query($sql, [$date, $date, $date]);
     }
 
     // 顶部放量股票
     public function getTopVolumeStocks(string $date): array
     {
-        // 量比>3，价格位置>70%
+        // 量比>3，价格位置>70% - 使用参数绑定防止注入
         $sql = "SELECT d.ts_code, s.name, s.industry, d.close,
                 d.vol / avg_vol.avg_vol as volume_ratio,
                 ((d.close - price_range.min_price) / (price_range.max_price - price_range.min_price)) * 100 as price_position,
@@ -235,21 +280,21 @@ class IndicatorService
                 JOIN (
                     SELECT ts_code, AVG(vol) as avg_vol
                     FROM daily_quotes
-                    WHERE trade_date <= '{$date}'
+                    WHERE trade_date <= ?
                     GROUP BY ts_code
                 ) avg_vol ON avg_vol.ts_code = d.ts_code
                 JOIN (
                     SELECT ts_code, MIN(low) as min_price, MAX(high) as max_price
                     FROM daily_quotes
-                    WHERE trade_date <= '{$date}'
+                    WHERE trade_date <= ?
                     GROUP BY ts_code
                 ) price_range ON price_range.ts_code = d.ts_code
-                WHERE d.trade_date = '{$date}'
+                WHERE d.trade_date = ?
                 HAVING volume_ratio > 3 AND price_position > 70
                 ORDER BY volume_ratio DESC
                 LIMIT 50";
 
-        return Db::query($sql);
+        return Db::query($sql, [$date, $date, $date]);
     }
 
     // 行业异动
@@ -357,20 +402,17 @@ class IndicatorService
     // 突破形态
     public function getBreakoutStocks(string $date): array
     {
-        // 简化实现：收盘价创20日新高
-        $sql = "SELECT d.ts_code, s.name, s.industry, '创新高' as type, d.pct_chg
-                FROM daily_quotes d
-                JOIN stocks s ON s.ts_code = d.ts_code
-                WHERE d.trade_date = '{$date}'
-                AND d.close = (
-                    SELECT MAX(close) FROM daily_quotes
-                    WHERE ts_code = d.ts_code AND trade_date <= '{$date}'
-                    ORDER BY trade_date DESC LIMIT 20
-                )
-                ORDER BY d.pct_chg DESC
-                LIMIT 50";
-
-        return Db::query($sql);
+        // 收盘价创20日新高
+        return Db::table('daily_quotes')
+            ->alias('d')
+            ->join('stocks s', 's.ts_code = d.ts_code')
+            ->where('d.trade_date', $date)
+            ->whereRaw('d.close = (SELECT MAX(close) FROM daily_quotes WHERE ts_code = d.ts_code AND trade_date <= ? LIMIT 1)', [$date])
+            ->field('d.ts_code, s.name, s.industry, d.pct_chg')
+            ->order('d.pct_chg', 'desc')
+            ->limit(50)
+            ->select()
+            ->toArray();
     }
 
     // 跳空高开
@@ -706,39 +748,56 @@ class IndicatorService
     }
 
     /**
-     * 中枢识别
-     * 至少3个线段的重叠区间
+     * 中枢识别（基于笔）
+     * 至少3笔的重叠区间才能形成中枢
      */
     protected function calculateChanHub(string $tsCode, array $segments): array
     {
-        if (count($segments) < 3) {
+        // 获取笔数据（从数据库）
+        $bis = Db::table('chan_bi')
+            ->where('ts_code', $tsCode)
+            ->order('bi_index', 'asc')
+            ->select()
+            ->toArray();
+
+        if (count($bis) < 3) {
             return [];
         }
 
         $hubs = [];
         $hubIndex = 0;
+        $i = 0;
 
-        for ($i = 0; $i <= count($segments) - 3; $i++) {
-            $seg1 = $segments[$i];
-            $seg2 = $segments[$i + 1];
-            $seg3 = $segments[$i + 2];
+        while ($i <= count($bis) - 3) {
+            $bi1 = $bis[$i];
+            $bi2 = $bis[$i + 1];
+            $bi3 = $bis[$i + 2];
 
-            // 计算重叠区间
-            $zg = min($seg1['high'], $seg2['high'], $seg3['high']); // 中枢上沿
-            $zd = max($seg1['low'], $seg2['low'], $seg3['low']);    // 中枢下沿
+            // 3笔的重叠区间：中枢上沿(zg) = min(3笔高点)，下沿(zd) = max(3笔低点)
+            $zg = min($bi1['high'], $bi2['high'], $bi3['high']);
+            $zd = max($bi1['low'], $bi2['low'], $bi3['low']);
 
-            // 有效中枢：上沿 > 下沿
+            // 有效中枢：上沿 > 下沿，且至少跨越1个完整的上升+下降或下降+上升
             if ($zg > $zd) {
+                // 从起点到终点的最高/最低（考虑后续笔的扩展）
+                $hubStart = $bi1['start_date'];
+                $hubEnd = $bi3['end_date'];
+                $gg = max($bi1['high'], $bi2['high'], $bi3['high']);
+                $dd = min($bi1['low'], $bi2['low'], $bi3['low']);
+
                 $hubs[] = [
-                    'start_date' => $seg1['start_date'],
-                    'end_date' => $seg3['end_date'],
+                    'start_date' => $hubStart,
+                    'end_date' => $hubEnd,
                     'zg' => $zg,
                     'zd' => $zd,
-                    'gg' => max($seg1['high'], $seg2['high'], $seg3['high']),
-                    'dd' => min($seg1['low'], $seg2['low'], $seg3['low']),
+                    'gg' => $gg,
+                    'dd' => $dd,
                     'hub_index' => $hubIndex++,
                 ];
-                $i += 2; // 跳过已使用的线段
+
+                $i += 2; // 移动到下一个可能的中枢起点
+            } else {
+                $i++;
             }
         }
 
@@ -754,6 +813,7 @@ class IndicatorService
                 'gg' => $hub['gg'],
                 'dd' => $hub['dd'],
                 'hub_index' => $hub['hub_index'],
+                'level' => 1,
             ]);
         }
 
