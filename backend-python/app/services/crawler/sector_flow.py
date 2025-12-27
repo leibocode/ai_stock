@@ -1,15 +1,12 @@
 from typing import List, Dict
-from .base import BaseCrawler
+import httpx
 from loguru import logger
 
 
-class SectorFlowCrawler(BaseCrawler):
+class SectorFlowCrawler:
     """板块资金流向爬虫"""
 
-    async def crawl_sector_flow(
-        self,
-        trade_date: str
-    ) -> List[Dict]:
+    async def crawl_sector_flow(self, trade_date: str) -> List[Dict]:
         """爬取板块资金流向
 
         Args:
@@ -21,37 +18,57 @@ class SectorFlowCrawler(BaseCrawler):
         try:
             url = "https://push2.eastmoney.com/api/qt/clist/get"
             params = {
+                "pn": "1",
+                "pz": "500",
                 "np": "1",
                 "fltt": "2",
                 "invt": "2",
                 "fid": "f3",
                 "fs": "m:90+t:2",
-                "fields": "f12,f14,f2,f3,f62,f104,f105,f106,f107,f109,f110",
-                "pagesize": "500",
-                "pageindex": "1",
+                "fields": "f12,f14,f3,f62",
             }
 
-            data = await self.get(url, params)
-            if not data or not data.get("data"):
+            async with httpx.AsyncClient(timeout=30, verify=False) as client:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+
+            if not data or not isinstance(data, dict):
+                logger.warning(f"Sector flow API returned no data for {trade_date}, got: {type(data)}")
+                return []
+
+            logger.debug(f"Sector flow API response keys: {list(data.keys())}")
+
+            # 东财API返回格式: {"data": {"diff": [{f12:代码, f14:名称, f2:收盘, f3:涨跌幅, f62:主力净流}, ...]}}
+            diff_list = data.get("data", {}).get("diff", [])
+            if not diff_list:
+                logger.warning(f"No sector data in API response for {trade_date}")
                 return []
 
             sectors = []
-            for item in data.get("data", []):
-                if len(item) < 11:
+            for item in diff_list:
+                if not item or not isinstance(item, dict):
                     continue
 
-                sector = {
-                    "code": item[0],
-                    "name": item[1],
-                    "close": float(item[2]) / 100,
-                    "pct_chg": float(item[3]) / 100,
-                    "main_net": float(item[4]) if item[4] else 0,  # 主力净流
-                    "up_count": int(item[5]),
-                    "down_count": int(item[6]),
-                    "flat_count": int(item[7]),
-                }
-                sectors.append(sector)
+                try:
+                    # f62是主力净流入（单位：元），转换为亿元
+                    main_net_raw = item.get("f62", 0) or 0
+                    main_net = round(float(main_net_raw) / 100000000, 2)
 
+                    sector = {
+                        "code": item.get("f12", ""),
+                        "name": item.get("f14", ""),
+                        "pct_chg": round(float(item.get("f3", 0) or 0), 2),
+                        "main_net": main_net,
+                    }
+                    sectors.append(sector)
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Failed to parse sector item {item}: {e}")
+                    continue
+
+            # 按主力净流入排序
+            sectors.sort(key=lambda x: x.get("main_net", 0), reverse=True)
+            logger.info(f"Crawled {len(sectors)} sector flow records for {trade_date}")
             return sectors
 
         except Exception as e:
@@ -79,15 +96,11 @@ class SectorFlowCrawler(BaseCrawler):
         }
 
         for sector in sectors:
-            sector_chg = sector.get("pct_chg", 0)
+            pct_chg = sector.get("pct_chg", 0)
 
-            # 逆势上涨
-            if market_pct_chg < 0 and sector_chg > 0:
+            if pct_chg > market_pct_chg:
                 result["counter_trend"].append(sector)
-            # 共振板块
-            elif market_pct_chg >= 0 and sector_chg > market_pct_chg + 0.5:
-                result["resonance"].append(sector)
-            elif market_pct_chg < 0 and sector_chg < market_pct_chg - 0.5:
+            elif pct_chg > 0 and market_pct_chg > 0:
                 result["resonance"].append(sector)
             else:
                 result["weakness"].append(sector)

@@ -294,7 +294,11 @@
                 <el-card>
                   <template #header>📈 一买信号 ({{ chanFirstBuy.length }})</template>
                   <el-table :data="chanFirstBuy" height="280" stripe size="small">
-                    <el-table-column prop="ts_code" label="代码" width="90" />
+                    <el-table-column prop="ts_code" label="代码" width="90">
+                      <template #default="{ row }">
+                        <el-link type="primary" @click="openChanDetail(row)">{{ row.ts_code }}</el-link>
+                      </template>
+                    </el-table-column>
                     <el-table-column prop="name" label="名称" width="70" />
                     <el-table-column prop="industry" label="行业" width="70" />
                     <el-table-column prop="price" label="价格" width="60" />
@@ -305,7 +309,11 @@
                 <el-card>
                   <template #header>📊 二买信号 ({{ chanSecondBuy.length }})</template>
                   <el-table :data="chanSecondBuy" height="280" stripe size="small">
-                    <el-table-column prop="ts_code" label="代码" width="90" />
+                    <el-table-column prop="ts_code" label="代码" width="90">
+                      <template #default="{ row }">
+                        <el-link type="primary" @click="openChanDetail(row)">{{ row.ts_code }}</el-link>
+                      </template>
+                    </el-table-column>
                     <el-table-column prop="name" label="名称" width="70" />
                     <el-table-column prop="industry" label="行业" width="70" />
                     <el-table-column prop="price" label="价格" width="60" />
@@ -316,7 +324,11 @@
                 <el-card>
                   <template #header>🚀 三买信号 ({{ chanThirdBuy.length }})</template>
                   <el-table :data="chanThirdBuy" height="280" stripe size="small">
-                    <el-table-column prop="ts_code" label="代码" width="90" />
+                    <el-table-column prop="ts_code" label="代码" width="90">
+                      <template #default="{ row }">
+                        <el-link type="primary" @click="openChanDetail(row)">{{ row.ts_code }}</el-link>
+                      </template>
+                    </el-table-column>
                     <el-table-column prop="name" label="名称" width="70" />
                     <el-table-column prop="industry" label="行业" width="70" />
                     <el-table-column prop="price" label="价格" width="60" />
@@ -329,7 +341,11 @@
                 <el-card>
                   <template #header>⬇️ 底背驰 ({{ chanBottomDiverge.length }})</template>
                   <el-table :data="chanBottomDiverge" height="280" stripe size="small">
-                    <el-table-column prop="ts_code" label="代码" width="90" />
+                    <el-table-column prop="ts_code" label="代码" width="90">
+                      <template #default="{ row }">
+                        <el-link type="primary" @click="openChanDetail(row)">{{ row.ts_code }}</el-link>
+                      </template>
+                    </el-table-column>
                     <el-table-column prop="name" label="名称" width="70" />
                     <el-table-column prop="industry" label="行业" width="70" />
                     <el-table-column prop="bi_low" label="笔低点" width="60" />
@@ -340,7 +356,11 @@
                 <el-card>
                   <template #header>⬆️ 顶背驰 ({{ chanTopDiverge.length }})</template>
                   <el-table :data="chanTopDiverge" height="280" stripe size="small">
-                    <el-table-column prop="ts_code" label="代码" width="90" />
+                    <el-table-column prop="ts_code" label="代码" width="90">
+                      <template #default="{ row }">
+                        <el-link type="primary" @click="openChanDetail(row)">{{ row.ts_code }}</el-link>
+                      </template>
+                    </el-table-column>
                     <el-table-column prop="name" label="名称" width="70" />
                     <el-table-column prop="industry" label="行业" width="70" />
                     <el-table-column prop="bi_high" label="笔高点" width="60" />
@@ -351,7 +371,11 @@
                 <el-card>
                   <template #header>🔄 中枢震荡 ({{ chanHubShake.length }})</template>
                   <el-table :data="chanHubShake" height="280" stripe size="small">
-                    <el-table-column prop="ts_code" label="代码" width="90" />
+                    <el-table-column prop="ts_code" label="代码" width="90">
+                      <template #default="{ row }">
+                        <el-link type="primary" @click="openChanDetail(row)">{{ row.ts_code }}</el-link>
+                      </template>
+                    </el-table-column>
                     <el-table-column prop="name" label="名称" width="70" />
                     <el-table-column prop="position" label="位置%" width="60">
                       <template #default="{ row }">
@@ -998,6 +1022,75 @@
             <el-table-column prop="pre_close" label="昨收" width="80" />
           </el-table>
         </el-dialog>
+
+        <!-- 个股缠论分析Dialog -->
+        <el-dialog
+          v-model="showChanDetail"
+          :title="`📈 ${chanDetailStock.name || chanDetailStock.ts_code} 缠论分析`"
+          width="80%"
+          @close="chanDetailData = {}; trendAnalysis = {}; multiPeriodData = {}"
+        >
+          <el-spin :spinning="chanDetailLoading">
+            <el-row :gutter="20" v-if="!chanDetailLoading">
+              <!-- 基本信息 -->
+              <el-col :span="24">
+                <el-card>
+                  <template #header>📊 基本信息</template>
+                  <el-row :gutter="20">
+                    <el-col :span="6">
+                      <span class="label">代码: {{ chanDetailStock.ts_code || chanDetailStock.code }}</span>
+                    </el-col>
+                    <el-col :span="6">
+                      <span class="label">名称: {{ chanDetailStock.name }}</span>
+                    </el-col>
+                    <el-col :span="6">
+                      <span class="label">行业: {{ chanDetailStock.industry }}</span>
+                    </el-col>
+                    <el-col :span="6">
+                      <span class="label">价格: {{ chanDetailStock.price || chanDetailStock.close }}</span>
+                    </el-col>
+                  </el-row>
+                </el-card>
+              </el-col>
+
+              <!-- 趋势分析 -->
+              <el-col :span="12" v-if="trendAnalysis.type">
+                <el-card>
+                  <template #header>📈 趋势分析</template>
+                  <div style="padding: 10px;">
+                    <p><strong>趋势:</strong> <span :class="trendAnalysis.type === '上涨' ? 'text-red' : 'text-green'">{{ trendAnalysis.type }}</span></p>
+                    <p><strong>阶段:</strong> {{ trendAnalysis.phase }}</p>
+                    <p><strong>中枢:</strong> {{ trendAnalysis.hub_count }}</p>
+                  </div>
+                </el-card>
+              </el-col>
+
+              <!-- 背驰信息 -->
+              <el-col :span="12" v-if="trendAnalysis.divergence">
+                <el-card>
+                  <template #header>🔄 背驰</template>
+                  <div style="padding: 10px;">
+                    <p><strong>类型:</strong> <span :class="trendAnalysis.divergence.is_diverge ? 'text-red' : ''">{{ trendAnalysis.divergence.is_diverge ? trendAnalysis.divergence.type : '无' }}</span></p>
+                    <p><strong>强度:</strong> {{ (trendAnalysis.divergence.strength * 100).toFixed(0) }}%</p>
+                  </div>
+                </el-card>
+              </el-col>
+
+              <!-- 多周期分析 -->
+              <el-col :span="24" v-if="multiPeriodData.signal">
+                <el-card>
+                  <template #header>🎯 多周期</template>
+                  <el-row :gutter="20">
+                    <el-col :span="8"><p><strong>日线:</strong> {{ multiPeriodData.daily?.type }}</p></el-col>
+                    <el-col :span="8"><p><strong>30m:</strong> {{ multiPeriodData.min30?.type }}</p></el-col>
+                    <el-col :span="8"><p><strong>5m:</strong> {{ multiPeriodData.min5?.type }}</p></el-col>
+                  </el-row>
+                  <p style="color: #e6a23c; font-weight: bold;">信号: {{ multiPeriodData.signal }} (信心 {{ (multiPeriodData.confidence * 100).toFixed(0) }}%)</p>
+                </el-card>
+              </el-col>
+            </el-row>
+          </el-spin>
+        </el-dialog>
       </el-main>
     </el-container>
   </div>
@@ -1042,6 +1135,9 @@ import {
   getChanHubShake,
   getChanData,
   calcChan,
+  getTrendAnalysis,
+  getMultiPeriodAnalysis,
+  scanMarket,
 } from './api/stock'
 
 const currentDate = ref(new Date().toISOString().slice(0, 10).replace(/-/g, ''))
@@ -1095,6 +1191,14 @@ const chanSecondBuy = ref([])
 const chanThirdBuy = ref([])
 const chanHubShake = ref([])
 const chanCalcing = ref(false)
+
+// 个股缠论分析
+const showChanDetail = ref(false)
+const chanDetailStock = ref({})
+const chanDetailData = ref({})
+const trendAnalysis = ref({})
+const multiPeriodData = ref({})
+const chanDetailLoading = ref(false)
 
 // 判断是否非交易日 (周末或数据为空)
 const isNonTradingDay = computed(() => {
@@ -1339,6 +1443,30 @@ const openFullscreen = (type, title, data) => {
   fullscreenTitle.value = title
   fullscreenData.value = data
   showFullscreen.value = true
+}
+
+// 打开个股缠论分析
+const openChanDetail = async (stock) => {
+  showChanDetail.value = true
+  chanDetailStock.value = stock
+  chanDetailLoading.value = true
+  try {
+    const tsCode = stock.ts_code || stock.code
+    // 并行加载各种分析数据
+    const [trend, multiPeriod, chan] = await Promise.allSettled([
+      getTrendAnalysis(tsCode).catch(() => ({})),
+      getMultiPeriodAnalysis(tsCode).catch(() => ({})),
+      getChanData(tsCode).catch(() => ({}))
+    ])
+
+    trendAnalysis.value = trend.value || {}
+    multiPeriodData.value = multiPeriod.value || {}
+    chanDetailData.value = chan.value || {}
+  } catch (err) {
+    console.error('加载个股分析失败:', err)
+  } finally {
+    chanDetailLoading.value = false
+  }
 }
 
 // 获取周期阶段样式

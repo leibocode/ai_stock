@@ -458,3 +458,18 @@ export const getChanData = async (tsCode) => {
 export const calcChan = async (date) => {
   return api.get('/calc-chan', { params: { date } })
 }
+
+// 趋势分析
+export const getTrendAnalysis = async (tsCode) => {
+  return api.get('/trend/analyze', { params: { ts_code: tsCode } })
+}
+
+// 多周期分析
+export const getMultiPeriodAnalysis = async (tsCode) => {
+  return api.get('/trend/multi-period-analysis', { params: { ts_code: tsCode } })
+}
+
+// 全市场扫描
+export const scanMarket = async (date) => {
+  return api.get('/trend-scan', { params: { date } })
+}

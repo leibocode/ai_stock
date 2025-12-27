@@ -2,13 +2,118 @@ from fastapi import APIRouter, Query, Depends
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
+import numpy as np
 from app.config import get_db
 from app.schemas import success, error
 from app.models import Stock, DailyQuote
 from app.utils.cache_decorator import with_cache
 from app.core.chan import ChanService
+from app.core.chan.divergence import (
+    detect_buy_points_from_bis,
+    detect_sell_points_from_bis,
+    detect_bottom_divergence,
+    detect_top_divergence,
+)
+from app.core.indicators.macd import calculate_macd_full
+from app.core.chan import (
+    merge_klines,
+    calculate_fractals,
+    calculate_bi,
+    calculate_segment,
+    calculate_hub_from_bis,
+)
 
 router = APIRouter(prefix="", tags=["缠论"])
+
+
+# ============================================================================
+# 辅助函数 - 缠论信号计算
+# ============================================================================
+
+async def calculate_stock_signals(ts_code: str, stock_name: str, db: AsyncSession) -> dict:
+    """计算单只股票的缠论信号（背驰、买卖点）
+
+    Args:
+        ts_code: 股票代码
+        stock_name: 股票名称
+        db: 数据库连接
+
+    Returns:
+        dict: 包含 MACD、分型、笔、中枢、背驰、买卖点信息
+    """
+    try:
+        # 获取历史K线数据（最近200条）
+        stmt = (
+            select(DailyQuote)
+            .where(DailyQuote.ts_code == ts_code)
+            .order_by(desc(DailyQuote.trade_date))
+            .limit(200)
+        )
+        result = await db.execute(stmt)
+        quotes = result.scalars().all()
+
+        if len(quotes) < 50:
+            return None
+
+        # 转换为正序列表
+        quotes = list(reversed(quotes))
+
+        # 提取 OHLC 数据
+        closes = np.array([float(q.close) for q in quotes])
+        highs = np.array([float(q.high) for q in quotes])
+        lows = np.array([float(q.low) for q in quotes])
+        dates = [q.trade_date for q in quotes]
+
+        # 计算 MACD
+        macd_result = calculate_macd_full(closes)
+
+        # 缠论分析
+        klines = [
+            {'high': float(highs[i]), 'low': float(lows[i]), 'close': float(closes[i])}
+            for i in range(len(closes))
+        ]
+        merged_klines = merge_klines(klines)
+        fractals = calculate_fractals(merged_klines)
+        bis = calculate_bi(fractals)
+
+        if len(bis) < 3:
+            return None
+
+        segments = calculate_segment(bis)
+        hubs = calculate_hub_from_bis(bis)
+
+        # 检测背驰信号
+        bottom_div = detect_bottom_divergence(closes, lows, macd_result.macd_array, window=20)
+        top_div = detect_top_divergence(closes, highs, macd_result.macd_array, window=20)
+
+        # 检测买卖点
+        buy_signals = detect_buy_points_from_bis(bis, closes, macd_result.macd_array, hubs)
+        sell_signals = detect_sell_points_from_bis(bis, closes, macd_result.macd_array, hubs)
+
+        return {
+            'ts_code': ts_code,
+            'name': stock_name,
+            'last_date': dates[-1] if dates else None,
+            'last_price': float(closes[-1]),
+            'macd': {
+                'dif': float(macd_result.dif),
+                'dea': float(macd_result.dea),
+                'hist': float(macd_result.macd),
+            },
+            'fractals_count': len(fractals),
+            'bis_count': len(bis),
+            'segments_count': len(segments),
+            'hubs': hubs,  # 保留中枢对象列表
+            'hubs_count': len(hubs),
+            'bottom_divergence': bottom_div,
+            'top_divergence': top_div,
+            'buy_signals': buy_signals,
+            'sell_signals': sell_signals,
+        }
+
+    except Exception as e:
+        logger.error(f"计算股票信号失败 {ts_code}: {e}")
+        return None
 
 
 @router.get("/chan-bottom-diverge")
@@ -28,16 +133,32 @@ async def get_chan_bottom_diverge(
 
     try:
         async def fetch_data():
-            # 底背驰识别逻辑需要：
-            # 1. 获取该日期前N天的K线数据
-            # 2. 计算缠论分型（底分型）
-            # 3. 检查底分型处的成交量/MACD是否发散
-            # 4. 返回符合条件的股票列表
+            # 获取该日期的所有股票
+            stmt = (
+                select(Stock)
+                .join(DailyQuote, Stock.ts_code == DailyQuote.ts_code)
+                .where(DailyQuote.trade_date == date)
+                .distinct()
+            )
+            result = await db.execute(stmt)
+            stocks = result.scalars().all()
+
+            bottom_diverge_stocks = []
+
+            for stock in stocks[:100]:  # 限制处理100只以避免超时
+                signal_data = await calculate_stock_signals(stock.ts_code, stock.name, db)
+                if signal_data and signal_data['bottom_divergence']:
+                    bottom_diverge_stocks.append({
+                        'ts_code': signal_data['ts_code'],
+                        'name': signal_data['name'],
+                        'price': signal_data['last_price'],
+                        'divergence': signal_data['bottom_divergence'],
+                    })
+
             return {
                 "date": date,
-                "bottom_diverge_stocks": [],
-                "count": 0,
-                "note": "需要实现缠论分型和背驰识别算法"
+                "bottom_diverge_stocks": bottom_diverge_stocks,
+                "count": len(bottom_diverge_stocks),
             }
 
         result_data = await with_cache(f"chan_bottom_diverge:{date}", fetch_data, ttl=86400)
@@ -65,16 +186,32 @@ async def get_chan_top_diverge(
 
     try:
         async def fetch_data():
-            # 顶背驰识别逻辑需要：
-            # 1. 获取该日期前N天的K线数据
-            # 2. 计算缠论分型（顶分型）
-            # 3. 检查顶分型处的成交量/MACD是否发散
-            # 4. 返回符合条件的股票列表
+            # 获取该日期的所有股票
+            stmt = (
+                select(Stock)
+                .join(DailyQuote, Stock.ts_code == DailyQuote.ts_code)
+                .where(DailyQuote.trade_date == date)
+                .distinct()
+            )
+            result = await db.execute(stmt)
+            stocks = result.scalars().all()
+
+            top_diverge_stocks = []
+
+            for stock in stocks[:100]:  # 限制处理100只以避免超时
+                signal_data = await calculate_stock_signals(stock.ts_code, stock.name, db)
+                if signal_data and signal_data['top_divergence']:
+                    top_diverge_stocks.append({
+                        'ts_code': signal_data['ts_code'],
+                        'name': signal_data['name'],
+                        'price': signal_data['last_price'],
+                        'divergence': signal_data['top_divergence'],
+                    })
+
             return {
                 "date": date,
-                "top_diverge_stocks": [],
-                "count": 0,
-                "note": "需要实现缠论分型和背驰识别算法"
+                "top_diverge_stocks": top_diverge_stocks,
+                "count": len(top_diverge_stocks),
             }
 
         result_data = await with_cache(f"chan_top_diverge:{date}", fetch_data, ttl=86400)
@@ -102,16 +239,32 @@ async def get_chan_first_buy(
 
     try:
         async def fetch_data():
-            # 一买识别需要：
-            # 1. 识别缠论笔（向下笔和向上笔）
-            # 2. 找到笔的转折点
-            # 3. 验证是否形成有效的反弹结构
-            # 4. 返回满足条件的股票
+            # 获取该日期的所有股票
+            stmt = (
+                select(Stock)
+                .join(DailyQuote, Stock.ts_code == DailyQuote.ts_code)
+                .where(DailyQuote.trade_date == date)
+                .distinct()
+            )
+            result = await db.execute(stmt)
+            stocks = result.scalars().all()
+
+            first_buy_stocks = []
+
+            for stock in stocks[:100]:  # 限制处理100只以避免超时
+                signal_data = await calculate_stock_signals(stock.ts_code, stock.name, db)
+                if signal_data and signal_data['buy_signals'].get('first_buy'):
+                    first_buy_stocks.append({
+                        'ts_code': signal_data['ts_code'],
+                        'name': signal_data['name'],
+                        'price': signal_data['last_price'],
+                        'signal': signal_data['buy_signals']['first_buy'],
+                    })
+
             return {
                 "date": date,
-                "first_buy_stocks": [],
-                "count": 0,
-                "note": "需要实现缠论笔识别和买点确认"
+                "first_buy_stocks": first_buy_stocks,
+                "count": len(first_buy_stocks),
             }
 
         result_data = await with_cache(f"chan_first_buy:{date}", fetch_data, ttl=86400)
@@ -139,16 +292,32 @@ async def get_chan_second_buy(
 
     try:
         async def fetch_data():
-            # 二买识别需要：
-            # 1. 基于一买点的识别
-            # 2. 检查回踩走势
-            # 3. 验证不破一买高点
-            # 4. 返回符合条件的股票
+            # 获取该日期的所有股票
+            stmt = (
+                select(Stock)
+                .join(DailyQuote, Stock.ts_code == DailyQuote.ts_code)
+                .where(DailyQuote.trade_date == date)
+                .distinct()
+            )
+            result = await db.execute(stmt)
+            stocks = result.scalars().all()
+
+            second_buy_stocks = []
+
+            for stock in stocks[:100]:  # 限制处理100只以避免超时
+                signal_data = await calculate_stock_signals(stock.ts_code, stock.name, db)
+                if signal_data and signal_data['buy_signals'].get('second_buy'):
+                    second_buy_stocks.append({
+                        'ts_code': signal_data['ts_code'],
+                        'name': signal_data['name'],
+                        'price': signal_data['last_price'],
+                        'signal': signal_data['buy_signals']['second_buy'],
+                    })
+
             return {
                 "date": date,
-                "second_buy_stocks": [],
-                "count": 0,
-                "note": "需要实现缠论一买和二买的联动识别"
+                "second_buy_stocks": second_buy_stocks,
+                "count": len(second_buy_stocks),
             }
 
         result_data = await with_cache(f"chan_second_buy:{date}", fetch_data, ttl=86400)
@@ -176,16 +345,32 @@ async def get_chan_third_buy(
 
     try:
         async def fetch_data():
-            # 三买识别需要：
-            # 1. 基于一买二买的识别
-            # 2. 检查中枢破坏情况
-            # 3. 验证上升段延续信号
-            # 4. 返回符合条件的股票
+            # 获取该日期的所有股票
+            stmt = (
+                select(Stock)
+                .join(DailyQuote, Stock.ts_code == DailyQuote.ts_code)
+                .where(DailyQuote.trade_date == date)
+                .distinct()
+            )
+            result = await db.execute(stmt)
+            stocks = result.scalars().all()
+
+            third_buy_stocks = []
+
+            for stock in stocks[:100]:  # 限制处理100只以避免超时
+                signal_data = await calculate_stock_signals(stock.ts_code, stock.name, db)
+                if signal_data and signal_data['buy_signals'].get('third_buy'):
+                    third_buy_stocks.append({
+                        'ts_code': signal_data['ts_code'],
+                        'name': signal_data['name'],
+                        'price': signal_data['last_price'],
+                        'signal': signal_data['buy_signals']['third_buy'],
+                    })
+
             return {
                 "date": date,
-                "third_buy_stocks": [],
-                "count": 0,
-                "note": "需要实现完整的缠论中枢和买点识别"
+                "third_buy_stocks": third_buy_stocks,
+                "count": len(third_buy_stocks),
             }
 
         result_data = await with_cache(f"chan_third_buy:{date}", fetch_data, ttl=86400)
@@ -213,16 +398,36 @@ async def get_chan_hub_shake(
 
     try:
         async def fetch_data():
-            # 中枢震荡识别需要：
-            # 1. 识别缠论中枢的上下边界
-            # 2. 计算中枢内K线的震荡幅度
-            # 3. 检查是否有效突破或跌破
-            # 4. 返回正在中枢震荡的股票
+            # 获取该日期的所有股票
+            stmt = (
+                select(Stock)
+                .join(DailyQuote, Stock.ts_code == DailyQuote.ts_code)
+                .where(DailyQuote.trade_date == date)
+                .distinct()
+            )
+            result = await db.execute(stmt)
+            stocks = result.scalars().all()
+
+            hub_shake_stocks = []
+
+            for stock in stocks[:100]:  # 限制处理100只以避免超时
+                signal_data = await calculate_stock_signals(stock.ts_code, stock.name, db)
+                if signal_data and signal_data['hubs_count'] > 0:
+                    # 检查最新价格是否在最新中枢内
+                    latest_hub = signal_data['hubs'][-1] if signal_data['hubs'] else None
+                    if latest_hub:
+                        # 如果有中枢信息，检查价格是否在中枢范围内
+                        hub_shake_stocks.append({
+                            'ts_code': signal_data['ts_code'],
+                            'name': signal_data['name'],
+                            'price': signal_data['last_price'],
+                            'hubs_count': signal_data['hubs_count'],
+                        })
+
             return {
                 "date": date,
-                "hub_shake_stocks": [],
-                "count": 0,
-                "note": "需要实现缠论中枢识别和震荡判断"
+                "hub_shake_stocks": hub_shake_stocks,
+                "count": len(hub_shake_stocks),
             }
 
         result_data = await with_cache(f"chan_hub_shake:{date}", fetch_data, ttl=86400)

@@ -13,7 +13,7 @@ class Stock(Base):
     industry = Column(String(50), nullable=True)
     market = Column(String(20), nullable=True)
     list_date = Column(String(8), nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, nullable=True, server_default=func.now())
 
     class Config:
         from_attributes = True

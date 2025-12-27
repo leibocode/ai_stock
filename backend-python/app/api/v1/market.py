@@ -73,8 +73,10 @@ async def get_oversold(
 
     try:
         async def fetch_data():
+            logger.info(f"[FETCH] Executing oversold query with date={date}, rsi_threshold={rsi_threshold}")
             stmt = (
-                select(TechnicalIndicator, Stock)
+                select(TechnicalIndicator, DailyQuote, Stock)
+                .join(DailyQuote, (TechnicalIndicator.ts_code == DailyQuote.ts_code) & (TechnicalIndicator.trade_date == DailyQuote.trade_date))
                 .join(Stock, TechnicalIndicator.ts_code == Stock.ts_code)
                 .where(TechnicalIndicator.trade_date == date)
                 .where(TechnicalIndicator.rsi_6 < rsi_threshold)
@@ -83,25 +85,37 @@ async def get_oversold(
             )
             result = await db.execute(stmt)
             rows = result.all()
+            logger.info(f"[FETCH] Query returned {len(rows)} rows")
 
-            return [
-                {
-                    "ts_code": indicator.ts_code,
-                    "name": stock.name,
-                    "industry": stock.industry,
-                    "close": float(indicator.close or 0),
-                    "rsi_6": float(indicator.rsi_6 or 0),
-                    "rsi_12": float(indicator.rsi_12 or 0),
-                    "pct_chg": float(indicator.pct_chg or 0),
-                }
-                for indicator, stock in rows
-            ]
+            result_list = []
+            for indicator, quote, stock in rows:
+                try:
+                    item = {
+                        "ts_code": indicator.ts_code,
+                        "name": stock.name,
+                        "industry": stock.industry,
+                        "close": float(quote.close or 0),
+                        "rsi_6": float(indicator.rsi_6 or 0),
+                        "rsi_12": float(indicator.rsi_12 or 0),
+                        "pct_chg": float(quote.pct_chg or 0),
+                    }
+                    result_list.append(item)
+                except Exception as e:
+                    logger.error(f"[FETCH] Error building item: {e}, row data: indicator={indicator}, quote={quote}, stock={stock}")
+                    raise
 
-        data = await with_cache(f"oversold:{date}:{rsi_threshold}", fetch_data, ttl=86400)
+            logger.info(f"[FETCH] Successfully built result with {len(result_list)} items")
+            return result_list
+
+        # 先跳过缓存，直接执行查询
+        data = await fetch_data()
+        # data = await with_cache(f"oversold:{date}:{rsi_threshold}", fetch_data, ttl=86400)
         return success(data)
 
     except Exception as e:
+        import traceback
         logger.error(f"Failed to get oversold stocks: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return error(f"获取失败: {str(e)}")
 
 
@@ -122,7 +136,8 @@ async def get_kdj_bottom(
     try:
         async def fetch_data():
             stmt = (
-                select(TechnicalIndicator, Stock)
+                select(TechnicalIndicator, DailyQuote, Stock)
+                .join(DailyQuote, (TechnicalIndicator.ts_code == DailyQuote.ts_code) & (TechnicalIndicator.trade_date == DailyQuote.trade_date))
                 .join(Stock, TechnicalIndicator.ts_code == Stock.ts_code)
                 .where(TechnicalIndicator.trade_date == date)
                 .where(TechnicalIndicator.k < k_threshold)
@@ -137,13 +152,13 @@ async def get_kdj_bottom(
                 {
                     "ts_code": indicator.ts_code,
                     "name": stock.name,
-                    "close": float(indicator.close or 0),
+                    "close": float(quote.close or 0),
                     "k": float(indicator.k or 0),
                     "d": float(indicator.d or 0),
                     "j": float(indicator.j or 0),
-                    "pct_chg": float(indicator.pct_chg or 0),
+                    "pct_chg": float(quote.pct_chg or 0),
                 }
-                for indicator, stock in rows
+                for indicator, quote, stock in rows
             ]
 
         data = await with_cache(f"kdj_bottom:{date}:{k_threshold}:{d_threshold}", fetch_data, ttl=86400)
@@ -169,7 +184,8 @@ async def get_macd_golden(
     try:
         async def fetch_data():
             stmt = (
-                select(TechnicalIndicator, Stock)
+                select(TechnicalIndicator, DailyQuote, Stock)
+                .join(DailyQuote, (TechnicalIndicator.ts_code == DailyQuote.ts_code) & (TechnicalIndicator.trade_date == DailyQuote.trade_date))
                 .join(Stock, TechnicalIndicator.ts_code == Stock.ts_code)
                 .where(TechnicalIndicator.trade_date == date)
                 .where(TechnicalIndicator.macd_hist > 0)
@@ -183,13 +199,13 @@ async def get_macd_golden(
                 {
                     "ts_code": indicator.ts_code,
                     "name": stock.name,
-                    "close": float(indicator.close or 0),
+                    "close": float(quote.close or 0),
                     "macd": float(indicator.macd or 0),
                     "macd_signal": float(indicator.macd_signal or 0),
                     "macd_hist": float(indicator.macd_hist or 0),
-                    "pct_chg": float(indicator.pct_chg or 0),
+                    "pct_chg": float(quote.pct_chg or 0),
                 }
-                for indicator, stock in rows
+                for indicator, quote, stock in rows
             ]
 
         data = await with_cache(f"macd_golden:{date}", fetch_data, ttl=86400)

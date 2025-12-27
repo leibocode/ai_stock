@@ -48,6 +48,11 @@ def calculate_macd(
 ) -> Tuple[float, float, float]:
     """计算MACD指标（返回最后一个值）
 
+    标准MACD计算：
+    1. DIF = EMA(12) - EMA(26)
+    2. DEA = EMA(DIF, 9)  # DEA是DIF的9日EMA，不是信号线
+    3. MACD = DIF - DEA   # MACD柱（不需要乘以2）
+
     Args:
         closes: 收盘价数组
         fast: 快线周期 (默认12)
@@ -55,7 +60,7 @@ def calculate_macd(
         signal: 信号线周期 (默认9)
 
     Returns:
-        (dif, dea, macd_hist)
+        (dif, dea, macd_hist) - 四舍五入到4位小数
     """
     if len(closes) < slow:
         return 0.0, 0.0, 0.0
@@ -63,13 +68,16 @@ def calculate_macd(
     ema_fast = calculate_ema(closes, fast)
     ema_slow = calculate_ema(closes, slow)
 
-    dif = ema_fast[-1] - ema_slow[-1]
-
-    # 计算DIF的EMA作为SIGNAL线
+    # DIF = 快线 - 慢线
     dif_array = ema_fast - ema_slow
-    dea = calculate_ema(dif_array, signal)[-1]
+    dif = dif_array[-1]
 
-    macd_hist = (dif - dea) * 2
+    # DEA = DIF的9日EMA（不需要乘以2）
+    dea_array = calculate_ema(dif_array, signal)
+    dea = dea_array[-1]
+
+    # MACD柱 = DIF - DEA
+    macd_hist = dif - dea
 
     return round(dif, 4), round(dea, 4), round(macd_hist, 4)
 
@@ -86,12 +94,12 @@ def calculate_macd_full(
 
     Args:
         closes: 收盘价数组
-        fast: 快线周期
-        slow: 慢线周期
-        signal: 信号线周期
+        fast: 快线周期 (默认12)
+        slow: 慢线周期 (默认26)
+        signal: 信号线周期 (默认9)
 
     Returns:
-        MACDValues 对象，包含完整序列
+        MACDValues 对象，包含完整序列和最后一个值
     """
     if len(closes) < slow:
         empty_array = np.array([])
@@ -100,9 +108,14 @@ def calculate_macd_full(
     ema_fast = calculate_ema(closes, fast)
     ema_slow = calculate_ema(closes, slow)
 
+    # DIF = 快线 - 慢线
     dif_array = ema_fast - ema_slow
+
+    # DEA = DIF的9日EMA
     dea_array = calculate_ema(dif_array, signal)
-    macd_array = (dif_array - dea_array) * 2
+
+    # MACD柱 = DIF - DEA（标准计算，无需乘以2）
+    macd_array = dif_array - dea_array
 
     return MACDValues(
         dif=float(dif_array[-1]),

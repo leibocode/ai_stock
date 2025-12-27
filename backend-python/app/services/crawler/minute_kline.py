@@ -74,9 +74,23 @@ class MinuteKlineCrawler(BaseCrawler):
                         logger.error(f"{ts_code}: HTTP {resp.status}")
                         return None
 
-                    data = await resp.json()
+                    # 处理文本响应，而不是直接解析JSON
+                    content = await resp.text()
+
+                    # 尝试解析JSON
+                    try:
+                        import json
+                        data = json.loads(content)
+                    except:
+                        # 如果是文本响应，尝试手动解析
+                        logger.debug(f"{ts_code}: 响应为文本格式，尝试手动解析")
+                        data = None
 
             # 解析响应
+            if data is None:
+                logger.warning(f"{ts_code}: 无法解析响应数据")
+                return None
+
             klines = self._parse_klines(data, ts_code)
             if not klines:
                 logger.warning(f"{ts_code}: 无法解析K线数据")
@@ -100,16 +114,29 @@ class MinuteKlineCrawler(BaseCrawler):
             东财格式 (0000001 / 1000001)
         """
         try:
-            code, market = ts_code.split(".")
-            if market == "SZ":
+            if not ts_code:
+                return None
+
+            if "." in ts_code:
+                code, market = ts_code.split(".")
+            else:
+                # 如果没有市场标识，根据开头判断
+                code = ts_code
+                if code.startswith("6"):
+                    market = "SH"  # 60xxxx 是上海
+                else:
+                    market = "SZ"  # 其他是深圳
+
+            if market == "SZ" or market == "sz":
                 # 深圳：0 前缀
                 return f"0{code}"
-            elif market == "SH":
+            elif market == "SH" or market == "sh":
                 # 上海：1 前缀
                 return f"1{code}"
             else:
                 return None
-        except:
+        except Exception as e:
+            logger.error(f"转换secid失败: {ts_code} - {e}")
             return None
 
     @staticmethod
