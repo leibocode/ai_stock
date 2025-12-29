@@ -16,4 +16,12 @@ api_router.include_router(chan.router)
 api_router.include_router(trend.router)           # 新增：趋势分析 API
 api_router.include_router(scheduler.router)       # 定时任务管理 API
 
+# 策略分析 API (v2.3 新增)
+from . import strategy
+api_router.include_router(strategy.router)
+
+# 情绪历史 API (v2.5 新增)
+from . import emotion
+api_router.include_router(emotion.router)
+
 __all__ = ["api_router"]

@@ -18,12 +18,22 @@ def _get_or_create_engine():
 
         print(f"[DATABASE] Creating engine with: {settings.DATABASE_URL}")
 
+        # 针对远程 MySQL 优化连接配置
+        connect_args = {}
+        if 'mysql' in settings.DATABASE_URL:
+            connect_args = {
+                'connect_timeout': 30,      # 连接超时30秒
+            }
+
         _engine = create_async_engine(
             settings.DATABASE_URL,
             echo=settings.DEBUG,
-            pool_size=10,
-            max_overflow=20,
-            pool_recycle=3600,
+            pool_size=5,                    # 减少连接池大小
+            max_overflow=10,                # 减少溢出连接
+            pool_recycle=180,               # 3分钟回收连接（远程服务器可能会断开空闲连接）
+            pool_pre_ping=True,             # 使用前检查连接是否有效
+            pool_timeout=30,                # 获取连接超时30秒
+            connect_args=connect_args,
         )
     return _engine
 
@@ -61,3 +71,16 @@ async def get_db():
             yield session
         finally:
             await session.close()
+
+
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def get_async_session():
+    """上下文管理器: 获取数据库session（非依赖注入场景使用）"""
+    factory = _get_or_create_session_factory()
+    session = factory()
+    try:
+        yield session
+    finally:
+        await session.close()
