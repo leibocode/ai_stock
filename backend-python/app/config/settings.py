@@ -6,8 +6,12 @@ from typing import Optional
 class Settings(BaseSettings):
     """应用配置"""
 
+    # 应用信息
+    APP_NAME: str = "AI Stock Review"
+    APP_VERSION: str = "1.0.0"
+
     # 数据库
-    DATABASE_URL: str = "sqlite+aiosqlite:///./ai_stock.db"
+    DATABASE_URL: str = "mysql+aiomysql://ai_stock:8pCNX3N3mzsHBLaW@122.152.213.87:3306/ai_stock"
 
     # Tushare
     TUSHARE_TOKEN: str = ""
@@ -17,13 +21,19 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # 应用
-    DEBUG: bool = False
-    API_V1_PREFIX: str = "/api"
+    DEBUG: bool = True
+    API_V1_PREFIX: str = "/api/v1"
 
     # 服务器
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     WORKERS: int = 4
+
+    # CORS 配置
+    ALLOWED_HOSTS: list = ["*"]
+
+    # 日志配置
+    LOG_LEVEL: str = "INFO"
 
     class Config:
         env_file = ".env"

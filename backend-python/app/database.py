@@ -1,8 +1,11 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import sessionmaker
 from app.config import get_settings
-from app.models import Base
+from app.config.database import Base
 from loguru import logger
+
+# 导入所有模型以注册到 Base
+from app.models import Stock, DailyQuote, TechnicalIndicator, ReviewRecord, ChanFractal, ChanBi, ChanSegment, ChanHub
 
 # 全局引擎和会话工厂
 engine = None
@@ -27,6 +30,10 @@ async def init_db():
         class_=AsyncSession,
         expire_on_commit=False,
     )
+
+    # 创建所有表
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
     logger.info("Database initialized")
 

@@ -1,9 +1,9 @@
 from typing import List, Dict
-import httpx
+from .base import BaseCrawler
 from loguru import logger
 
 
-class SectorFlowCrawler:
+class SectorFlowCrawler(BaseCrawler):
     """板块资金流向爬虫"""
 
     async def crawl_sector_flow(self, trade_date: str) -> List[Dict]:
@@ -28,21 +28,17 @@ class SectorFlowCrawler:
                 "fields": "f12,f14,f3,f62",
             }
 
-            async with httpx.AsyncClient(timeout=30, verify=False) as client:
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
-                data = resp.json()
+            # 使用BaseCrawler的get方法，获得反爬虫机制
+            data = await self.get(url, params, retry=False)
 
             if not data or not isinstance(data, dict):
-                logger.warning(f"Sector flow API returned no data for {trade_date}, got: {type(data)}")
+                logger.warning(f"Sector flow API returned no data for {trade_date}")
                 return []
-
-            logger.debug(f"Sector flow API response keys: {list(data.keys())}")
 
             # 东财API返回格式: {"data": {"diff": [{f12:代码, f14:名称, f2:收盘, f3:涨跌幅, f62:主力净流}, ...]}}
             diff_list = data.get("data", {}).get("diff", [])
             if not diff_list:
-                logger.warning(f"No sector data in API response for {trade_date}")
+                logger.debug(f"No sector data in API response for {trade_date}")
                 return []
 
             sectors = []
@@ -52,7 +48,9 @@ class SectorFlowCrawler:
 
                 try:
                     # f62是主力净流入（单位：元），转换为亿元
-                    main_net_raw = item.get("f62", 0) or 0
+                    main_net_raw = item.get("f62", 0)
+                    if main_net_raw is None:
+                        main_net_raw = 0
                     main_net = round(float(main_net_raw) / 100000000, 2)
 
                     sector = {

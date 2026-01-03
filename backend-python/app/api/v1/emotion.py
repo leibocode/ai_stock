@@ -2,6 +2,7 @@
 """情绪历史数据 API
 
 提供情绪历史存储和查询功能
+支持从开盘啦App获取实时数据
 """
 import json
 from datetime import datetime, timedelta
@@ -13,8 +14,18 @@ from loguru import logger
 
 from app.config.database import get_db
 from app.models.emotion_history import EmotionHistory
+from app.services.crawler.kaipanla import KaipanlaAppCrawler
 
 router = APIRouter(prefix="/emotion", tags=["情绪历史"])
+
+# 开盘啦爬虫实例（复用）
+_kaipanla_crawler = None
+
+def get_kaipanla_crawler():
+    global _kaipanla_crawler
+    if _kaipanla_crawler is None:
+        _kaipanla_crawler = KaipanlaAppCrawler()
+    return _kaipanla_crawler
 
 
 def success(data: Any, msg: str = "success") -> Dict:
@@ -23,6 +34,86 @@ def success(data: Any, msg: str = "success") -> Dict:
 
 def error(msg: str, code: int = 1) -> Dict:
     return {"code": code, "data": None, "msg": msg}
+
+
+@router.get("/realtime")
+async def get_realtime_emotion(
+    date: str = Query(None, description="日期 YYYY-MM-DD，默认最近交易日")
+):
+    """从开盘啦获取实时市场情绪数据
+
+    返回完整的市场情绪数据，包括：
+    - 综合强度 (0-100)
+    - 涨跌停数量
+    - 涨跌分布
+    - 连板数据
+    - 市场量能
+    - 情绪阶段判断
+    """
+    try:
+        crawler = get_kaipanla_crawler()
+
+        # 获取市场情绪数据
+        emotion_data = crawler.crawl_market_emotion(date)
+
+        # 判断情绪阶段
+        phase = crawler.determine_emotion_phase(emotion_data)
+        emotion_data['emotion_phase'] = phase
+
+        # 获取涨停股列表
+        limit_up_list = crawler.crawl_limit_up_list(date)
+
+        # 计算最高连板
+        max_continuous = 0
+        if limit_up_list:
+            max_continuous = max(s.get('continuous', 1) for s in limit_up_list)
+
+        emotion_data['max_continuous'] = max_continuous
+        emotion_data['limit_up_stocks'] = limit_up_list[:20]  # 前20只
+
+        # 阶段中文映射
+        phase_names = {
+            'high_tide': '高潮期',
+            'ebb_tide': '退潮期',
+            'ice_point': '冰点期',
+            'warming': '回暖期',
+            'repair': '修复期'
+        }
+        emotion_data['emotion_phase_name'] = phase_names.get(phase, '未知')
+
+        # 策略建议
+        strategies = {
+            'high_tide': '追踪龙头，关注补涨机会，注意高位风险',
+            'ebb_tide': '控制仓位，谨慎参与，等待企稳信号',
+            'ice_point': '观望为主，等待底部确认，可小仓位试探',
+            'warming': '关注弱转强，首板确认信号，逐步加仓',
+            'repair': '参与超跌反弹，关注技术金叉，保持灵活'
+        }
+        emotion_data['strategy'] = strategies.get(phase, '保持观察')
+
+        return success(emotion_data)
+
+    except Exception as e:
+        logger.error(f"获取实时情绪数据失败: {e}")
+        return error(f"获取失败: {str(e)}")
+
+
+@router.get("/limit-up-list")
+async def get_limit_up_stocks(
+    date: str = Query(None, description="日期 YYYY-MM-DD")
+):
+    """获取涨停股列表"""
+    try:
+        crawler = get_kaipanla_crawler()
+        stocks = crawler.crawl_limit_up_list(date)
+
+        return success({
+            "count": len(stocks),
+            "stocks": stocks
+        })
+    except Exception as e:
+        logger.error(f"获取涨停列表失败: {e}")
+        return error(f"获取失败: {str(e)}")
 
 
 @router.get("/history")

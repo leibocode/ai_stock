@@ -15,7 +15,29 @@
       "Bash(findstr :8000)",
       "Bash(taskkill:*)",
       "Bash(timeout /t 2)",
-      "Bash(\"venv_sqlite\\\\Scripts\\\\python\" init_db.py)"
+      "Bash(\"venv_sqlite\\\\Scripts\\\\python\" init_db.py)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git pull)",
+      "Bash(timeout /t 3)",
+      "Bash(ping:*)",
+      "Bash(timeout:*)",
+      "Bash(npm run dev:*)",
+      "Bash(ipconfig:*)",
+      "Bash(findstr:*)",
+      "Bash(mitmweb:*)",
+      "Bash(where:*)",
+      "Bash(powershell:*)",
+      "Bash(start \"\" mitmdump -w \"C:\\\\Users\\\\25251\\\\Desktop\\\\新建文件夹\\\\ai_stock\\\\backend-python\\\\kaipanla.flow\")",
+      "Bash(time curl -s \"http://127.0.0.1:8000/api/v1/industry-gap?date=20251222\")",
+      "Bash(time curl:*)",
+      "Bash(cat:*)",
+      "Bash(mitmdump:*)",
+      "Bash(tasklist:*)",
+      "Bash(dir \"%APPDATA%\\\\mitmproxy\")",
+      "Bash(wmic process:*)",
+      "Bash(git reset:*)"
     ]
   }
 }

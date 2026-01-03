@@ -41,73 +41,46 @@ class NorthFlowCrawler(BaseCrawler):
     async def _get_north_holdings(self) -> List[Dict]:
         """获取北向资金持仓TOP10
 
-        支持两个备选API：
-        1. 东财datacenter API（优先）
-        2. 东财实时API（备选）
+        使用东财push2实时API获取港股通持股排行
         """
         try:
-            # 方案1: 试试datacenter API
-            url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
-            params = {
-                "reportName": "RPT_HK_IPOLDERS",
-                "pageNumber": 1,
-                "pageSize": 10,
-                "sortTypes": "-1",
-                "sortFields": "HOLD_MARKET_CAP",
-            }
-
-            data = await self.get(url, params, retry=False)
-            if data and data.get("result") and data["result"].get("data"):
-                holdings = []
-                for item in data["result"]["data"]:
-                    if not item:
-                        continue
-                    try:
-                        holdings.append({
-                            "code": item.get("SECUCODE", ""),
-                            "name": item.get("SECURITY_NAME", ""),
-                            "hold_market_cap": round(float(item.get("HOLD_MARKET_CAP", 0)), 2),
-                            "hold_ratio": round(float(item.get("HOLD_RATIO", 0)), 2)
-                        })
-                    except (ValueError, TypeError):
-                        continue
-
-                if holdings:
-                    return holdings[:10]
-
-            # 方案2: 降级到push2 API（简化版）
-            logger.debug("Datacenter API failed, trying push2 API")
             url = "https://push2.eastmoney.com/api/qt/clist/get"
             params = {
+                "pn": "1",
+                "pz": "10",
                 "np": "1",
                 "fltt": "2",
                 "invt": "2",
                 "fid": "f3",
                 "fs": "m:116",  # 港股通持股排行
-                "fields": "f12,f14,f2,f3,f62,f104,f105,f106,f107,f109,f110",
+                "fields": "f12,f14,f2,f3,f62",
                 "pagesize": "10",
-                "pageindex": "1",
             }
 
             data = await self.get(url, params, retry=False)
-            if data and data.get("data"):
+            if data and data.get("data") and data["data"].get("diff"):
                 holdings = []
-                for item in data.get("data", []):
-                    if not item or len(item) < 11:
+                for item in data["data"]["diff"]:
+                    if not item or not isinstance(item, dict):
                         continue
                     try:
                         holdings.append({
-                            "code": item[0] if len(item) > 0 else "",
-                            "name": item[1] if len(item) > 1 else "",
-                            "hold_market_cap": float(item[2]) if len(item) > 2 else 0,
-                            "hold_ratio": float(item[3]) if len(item) > 3 else 0
+                            "code": item.get("f12", ""),
+                            "name": item.get("f14", ""),
+                            "price": float(item.get("f2", 0)),
+                            "pct_chg": float(item.get("f3", 0)),
+                            "net_flow": float(item.get("f62", 0)) / 100000000,  # 转亿
                         })
-                    except (ValueError, TypeError, IndexError):
+                    except (ValueError, TypeError):
                         continue
 
-                return holdings[:10]
+                if holdings:
+                    logger.info(f"Crawled {len(holdings)} north holdings records")
+                    return holdings[:10]
 
+            logger.debug("No north holdings data from push2 API")
             return []
+
         except Exception as e:
             logger.error(f"Failed to get north holdings: {e}")
             return []

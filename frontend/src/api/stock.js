@@ -473,3 +473,175 @@ export const getMultiPeriodAnalysis = async (tsCode) => {
 export const scanMarket = async (date) => {
   return api.get('/trend-scan', { params: { date } })
 }
+
+// ==================== v2.5 策略分析 API ====================
+
+/**
+ * 完整策略分析（一站式决策）
+ * @param {Object} emotionData - 市场情绪数据
+ * @param {Object} marketData - 市场数据
+ * @param {Array} holdings - 持仓列表（可选）
+ * @returns {Promise} 完整分析结果
+ */
+export const getFullAnalysis = async (emotionData, marketData, holdings = []) => {
+  return api.post('/strategy/full-analysis', {
+    emotion_data: emotionData,
+    market_data: marketData,
+    holdings: holdings
+  })
+}
+
+/**
+ * 分析单只持仓反馈信号
+ * @param {Object} holding - 持仓信息
+ * @param {Object} market - 市场数据
+ * @returns {Promise} 反馈分析结果
+ */
+export const analyzeHoldingFeedback = async (holding, market) => {
+  return api.post('/strategy/feedback/analyze-holding', {
+    holding,
+    market
+  })
+}
+
+/**
+ * 批量分析所有持仓反馈信号
+ * @param {Array} holdings - 持仓列表
+ * @param {Object} market - 市场数据
+ * @returns {Promise} 批量反馈分析结果
+ */
+export const batchAnalyzeHoldings = async (holdings, market) => {
+  return api.post('/strategy/feedback/batch-analyze', {
+    holdings,
+    market
+  })
+}
+
+/**
+ * 获取市场情绪周期
+ * @param {Object} emotionData - 情绪数据
+ * @returns {Promise} 情绪周期分析
+ */
+export const getEmotionCycle = async (emotionData) => {
+  return api.post('/strategy/emotion-phase', emotionData)
+}
+
+/**
+ * 检测市场共振信号
+ * @param {Object} resonanceInput - 共振检测输入
+ * @returns {Promise} 共振检测结果
+ */
+export const detectResonance = async (resonanceInput) => {
+  return api.post('/strategy/resonance-detect', resonanceInput)
+}
+
+/**
+ * 生成买卖信号
+ * @param {Object} marketData - 市场数据
+ * @returns {Promise} 信号生成结果
+ */
+export const generateSignals = async (marketData) => {
+  return api.post('/strategy/generate-signals', marketData)
+}
+
+/**
+ * 计算仓位建议
+ * @param {Object} positionInput - 仓位输入数据
+ * @returns {Promise} 仓位建议
+ */
+export const getPositionAdvice = async (positionInput) => {
+  return api.post('/strategy/position-advice', positionInput)
+}
+
+// ==================== 开盘啦 API (App版) ====================
+
+/**
+ * 获取实时市场情绪数据 (开盘啦App API)
+ * @param {String} date - 日期 YYYY-MM-DD，默认最近交易日
+ * @returns {Promise} 完整情绪数据，包括综合强度、涨跌分布、连板数据等
+ */
+export const getRealtimeEmotion = async (date) => {
+  return api.get('/emotion/realtime', { params: { date } })
+}
+
+/**
+ * 获取涨停股列表 (开盘啦App API)
+ * @param {String} date - 日期 YYYY-MM-DD
+ * @returns {Promise} 涨停股列表
+ */
+export const getEmotionLimitUpList = async (date) => {
+  return api.get('/emotion/limit-up-list', { params: { date } })
+}
+
+/**
+ * 获取情绪历史数据
+ * @param {Number} days - 获取最近N天数据
+ * @returns {Promise} 历史情绪数据
+ */
+export const getEmotionHistory = async (days = 7) => {
+  return api.get('/emotion/history', { params: { days } })
+}
+
+/**
+ * 获取最新情绪数据
+ * @returns {Promise} 最新情绪数据
+ */
+export const getLatestEmotion = async () => {
+  return api.get('/emotion/latest')
+}
+
+// ==================== 开盘啦 API (网页版 - 保留兼容) ====================
+
+/**
+ * 获取开盘啦涨停股列表
+ * @param {String} date - 交易日期 YYYYMMDD
+ * @returns {Promise} 涨停股数据
+ */
+export const getKaipanlaLimitUp = async (date) => {
+  return api.get('/kaipanla/limit-up', { params: { date } })
+}
+
+/**
+ * 获取开盘啦炸板股列表
+ * @param {String} date - 交易日期 YYYYMMDD
+ * @returns {Promise} 炸板股数据
+ */
+export const getKaipanlaBrokenBoard = async (date) => {
+  return api.get('/kaipanla/broken-board', { params: { date } })
+}
+
+/**
+ * 获取连板梯队
+ * @param {String} date - 交易日期 YYYYMMDD
+ * @returns {Promise} 连板梯队数据
+ */
+export const getKaipanlaContinuousLadder = async (date) => {
+  return api.get('/kaipanla/continuous-ladder', { params: { date } })
+}
+
+/**
+ * 获取开盘啦跌停股列表
+ * @param {String} date - 交易日期 YYYYMMDD
+ * @returns {Promise} 跌停股数据
+ */
+export const getKaipanlaLimitDown = async (date) => {
+  return api.get('/kaipanla/limit-down', { params: { date } })
+}
+
+/**
+ * 获取昨日涨停今日表现
+ * @param {String} date - 交易日期 YYYYMMDD
+ * @returns {Promise} 昨日涨停表现数据
+ */
+export const getKaipanlaYesterdayPerformance = async (date) => {
+  return api.get('/kaipanla/yesterday-performance', { params: { date } })
+}
+
+/**
+ * 获取开盘啦完整情绪数据（一站式）
+ * @param {String} date - 交易日期 YYYYMMDD
+ * @returns {Promise} 完整情绪数据
+ */
+export const getKaipanlaFullEmotion = async (date) => {
+  return api.get('/kaipanla/full-emotion', { params: { date } })
+}

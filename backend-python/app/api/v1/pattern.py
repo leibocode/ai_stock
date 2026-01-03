@@ -456,58 +456,57 @@ async def get_industry_gap(
 
     try:
         async def fetch_data():
-            # 查询当日和前一日的数据
-            stmt = (
+            # 格式化日期
+            formatted_date = f"{date[:4]}-{date[4:6]}-{date[6:8]}" if len(date) == 8 else date
+
+            # 查询当日的行情数据
+            stmt_today = (
                 select(DailyQuote, Stock)
                 .join(Stock, DailyQuote.ts_code == Stock.ts_code)
-                .where(DailyQuote.trade_date <= date)
-                .order_by(DailyQuote.ts_code, desc(DailyQuote.trade_date))
-                .limit(2000)
+                .where(DailyQuote.trade_date == formatted_date)
             )
-            result = await db.execute(stmt)
-            rows = result.all()
+            result_today = await db.execute(stmt_today)
+            rows_today = result_today.all()
 
-            data_list = [
-                {
-                    "ts_code": quote.ts_code,
-                    "industry": stock.industry or "未分类",
-                    "trade_date": quote.trade_date,
-                    "open": float(quote.open or 0),
-                    "high": float(quote.high or 0),
-                    "low": float(quote.low or 0),
-                    "close": float(quote.close or 0),
-                }
-                for quote, stock in rows
-            ]
-
-            if not data_list:
+            if not rows_today:
                 return []
 
-            df = pd.DataFrame(data_list)
+            # 获取前一日的数据
+            ts_codes = [quote.ts_code for quote, _ in rows_today]
+            stmt_yesterday = (
+                select(DailyQuote)
+                .where(DailyQuote.ts_code.in_(ts_codes))
+                .where(DailyQuote.trade_date < formatted_date)
+                .order_by(DailyQuote.ts_code, desc(DailyQuote.trade_date))
+            )
+            result_yesterday = await db.execute(stmt_yesterday)
+            rows_yesterday = result_yesterday.scalars().all()
 
-            # 识别行业跳空
+            # 构建前一日数据字典
+            yesterday_data = {}
+            for quote in rows_yesterday:
+                if quote.ts_code not in yesterday_data:
+                    yesterday_data[quote.ts_code] = quote
+
+            # 计算跳空
             industry_gaps = []
-            for (ts_code, industry), group in df.groupby(['ts_code', 'industry']):
-                group = group.sort_values('trade_date', ascending=False)
-                if len(group) < 2:
+            for quote_today, stock_today in rows_today:
+                quote_yesterday = yesterday_data.get(quote_today.ts_code)
+                if not quote_yesterday:
                     continue
 
-                today = group.iloc[0]
-                yesterday = group.iloc[1]
-
                 # 计算跳空
-                if today['open'] > yesterday['high']:
+                if quote_today.open > quote_yesterday.high:
                     gap = 'up'
-                    gap_pct = (today['open'] - yesterday['high']) / yesterday['high'] * 100
-                elif today['open'] < yesterday['low']:
+                    gap_pct = (quote_today.open - quote_yesterday.high) / quote_yesterday.high * 100
+                elif quote_today.open < quote_yesterday.low:
                     gap = 'down'
-                    gap_pct = -(yesterday['low'] - today['open']) / yesterday['low'] * 100
+                    gap_pct = -(quote_yesterday.low - quote_today.open) / quote_yesterday.low * 100
                 else:
                     continue
 
                 industry_gaps.append({
-                    "industry": industry,
-                    "ts_code": ts_code,
+                    "industry": stock_today.industry or "未分类",
                     "gap_type": gap,
                     "gap_pct": round(gap_pct, 2),
                 })
@@ -515,26 +514,28 @@ async def get_industry_gap(
             if not industry_gaps:
                 return []
 
-            gap_df = pd.DataFrame(industry_gaps)
-
             # 按行业统计平均跳空
-            industry_stats = gap_df.groupby('industry').agg({
-                'ts_code': 'count',
-                'gap_pct': 'mean',
-            }).rename(columns={'ts_code': 'stock_count'})
+            from collections import defaultdict
+            industry_stats = defaultdict(lambda: {'gap_sum': 0, 'count': 0})
 
-            industry_stats = industry_stats.sort_values('gap_pct', ascending=False).head(20)
+            for gap in industry_gaps:
+                industry = gap['industry']
+                industry_stats[industry]['gap_sum'] += gap['gap_pct']
+                industry_stats[industry]['count'] += 1
 
-            return [
-                {
+            result = []
+            for industry, stats in industry_stats.items():
+                result.append({
                     "industry": industry,
-                    "stock_count": int(row['stock_count']),
-                    "avg_gap_pct": round(row['gap_pct'], 2),
-                }
-                for industry, row in industry_stats.iterrows()
-            ]
+                    "stock_count": stats['count'],
+                    "avg_gap_pct": round(stats['gap_sum'] / stats['count'], 2),
+                })
 
-        data = await with_cache(f"industry_gap:{date}", fetch_data, ttl=86400)
+            # 按平均跳空排序，取TOP20
+            result.sort(key=lambda x: abs(x['avg_gap_pct']), reverse=True)
+            return result[:20]
+
+        data = await with_cache(f"industry_gap:{date}", fetch_data, ttl=3600)
         return success(data)
 
     except Exception as e:

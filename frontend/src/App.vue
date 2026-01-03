@@ -1,84 +1,118 @@
 <template>
   <div class="app-container" :class="{ 'blue-theme': useBlueUp }">
     <el-container>
-      <el-header>
-        <h1>📊 复盘工具</h1>
-        <div class="header-actions">
+      <!-- 新版简洁头部 -->
+      <el-header class="app-header">
+        <div class="header-left">
+          <h1 class="app-title">🎯 情绪周期交易助手</h1>
+          <div class="market-quick-info" v-if="eastmoneyData">
+            <span class="info-item">
+              <span class="info-label">情绪</span>
+              <span class="info-value" :class="getEmotionClass">
+                {{ eastmoneyData.market_emotion?.emotion_level || '修复期' }}
+              </span>
+            </span>
+            <span class="info-divider">|</span>
+            <span class="info-item">
+              <span class="info-label">涨停</span>
+              <span class="info-value up">{{ eastmoneyData.limit_up_down?.limit_up_count || 0 }}</span>
+            </span>
+            <span class="info-divider">|</span>
+            <span class="info-item">
+              <span class="info-label">北向</span>
+              <span class="info-value" :class="(eastmoneyData.north_flow?.total || 0) >= 0 ? 'up' : 'down'">
+                {{ (eastmoneyData.north_flow?.total || 0) >= 0 ? '+' : '' }}{{ eastmoneyData.north_flow?.total || 0 }}亿
+              </span>
+            </span>
+          </div>
+        </div>
+        <div class="header-right">
           <el-date-picker
             v-model="currentDate"
             type="date"
-            placeholder="选择日期"
-            format="YYYY-MM-DD"
+            placeholder="交易日"
+            format="MM-DD"
             value-format="YYYYMMDD"
+            :disabled-date="disabledDate"
             @change="loadData"
+            size="small"
+            style="width: 100px"
           />
-          <el-button type="primary" @click="syncData" :loading="syncing">
-            同步数据
+          <el-button size="small" @click="crawlData" :loading="crawling">
+            刷新数据
           </el-button>
-          <el-select v-model="dataSource" style="width: 100px; margin-right: 10px;">
-            <el-option label="东财/同花顺" value="eastmoney" />
-            <el-option label="Tushare" value="tushare" />
-          </el-select>
-          <el-button type="success" @click="crawlData" :loading="crawling">
-            爬取数据
+          <el-button size="small" @click="showSettingsDrawer = true">
+            <el-icon><Setting /></el-icon>
           </el-button>
-          <el-switch
-            v-model="autoRefresh"
-            active-text="自动刷新"
-            inactive-text=""
-            style="margin-left: 10px;"
-            @change="toggleAutoRefresh"
-          />
-          <el-switch
-            v-model="useBlueUp"
-            active-text="蓝涨"
-            inactive-text="红涨"
-            style="margin-left: 10px;"
-          />
-          <span v-if="autoRefresh && isTradeTime" style="margin-left: 8px; font-size: 12px; color: #67c23a;">
-            {{ refreshInterval }}s后刷新
-          </span>
-          <span v-if="autoRefresh && !isTradeTime" style="margin-left: 8px; font-size: 12px; color: #909399;">
-            非交易时段
-          </span>
         </div>
       </el-header>
 
-      <el-main>
-        <!-- 大盘指数条 -->
-        <div class="market-index-bar" v-if="eastmoneyData">
-          <div class="index-item">
-            <span class="index-name">上证</span>
-            <span :class="(eastmoneyData.sector_strength?.market_chg || 0) >= 0 ? 'text-blue' : 'text-green'">
-              {{ (eastmoneyData.sector_strength?.market_chg || 0) >= 0 ? '+' : '' }}{{ eastmoneyData.sector_strength?.market_chg || 0 }}%
-            </span>
+      <el-main class="app-main">
+        <!-- 核心功能导航 -->
+        <div class="core-nav">
+          <div
+            v-for="nav in coreNavItems"
+            :key="nav.name"
+            class="nav-item"
+            :class="{ active: activeTab === nav.name }"
+            @click="activeTab = nav.name"
+          >
+            <span class="nav-icon">{{ nav.icon }}</span>
+            <span class="nav-label">{{ nav.label }}</span>
           </div>
-          <div class="index-item">
-            <span class="index-name">涨停</span>
-            <span class="text-blue">{{ eastmoneyData.limit_up_down?.limit_up_count || 0 }}</span>
-          </div>
-          <div class="index-item">
-            <span class="index-name">跌停</span>
-            <span class="text-green">{{ eastmoneyData.limit_up_down?.limit_down_count || 0 }}</span>
-          </div>
-          <div class="index-item">
-            <span class="index-name">北向</span>
-            <span :class="(eastmoneyData.north_flow?.total || 0) >= 0 ? 'text-blue' : 'text-green'">
-              {{ (eastmoneyData.north_flow?.total || 0) >= 0 ? '+' : '' }}{{ eastmoneyData.north_flow?.total || 0 }}亿
-            </span>
-          </div>
-          <div class="index-item">
-            <span class="index-name">情绪</span>
-            <span :class="(eastmoneyData.market_emotion?.up_ratio || 0) >= 50 ? 'text-blue' : 'text-green'">
-              {{ eastmoneyData.market_emotion?.emotion_level || '-' }}
-            </span>
+          <div class="nav-item more-btn" @click="showAnalysisDrawer = true">
+            <span class="nav-icon">📊</span>
+            <span class="nav-label">更多分析</span>
+            <el-icon class="arrow-icon"><ArrowRight /></el-icon>
           </div>
         </div>
 
-        <!-- Tab分类 -->
-        <el-tabs v-model="activeTab" type="card">
-          <!-- 量价分析 -->
-          <el-tab-pane label="📈 量价分析" name="volume">
+        <!-- 核心功能内容区 -->
+        <div class="core-content">
+          <!-- 今日决策 -->
+          <TodayDecision
+            v-if="activeTab === 'decision'"
+            :emotion-phase="kaipanlaData?.emotion_phase || eastmoneyData?.market_emotion?.emotion_phase || 'repair'"
+            :emotion-score="kaipanlaData?.emotion_score || eastmoneyData?.market_emotion?.emotion_score || 50"
+            :market-data="eastmoneyData"
+            :kaipanla-data="kaipanlaData"
+            @navigate="navigateToTab"
+          />
+
+          <!-- 我的持仓 -->
+          <MyHoldings
+            v-if="activeTab === 'holdings'"
+            :emotion-phase="kaipanlaData?.emotion_phase || eastmoneyData?.market_emotion?.emotion_phase || 'repair'"
+            :emotion-score="kaipanlaData?.emotion_score || eastmoneyData?.market_emotion?.emotion_score || 50"
+          />
+
+          <!-- 智能选股 -->
+          <SmartPicks
+            v-if="activeTab === 'picks'"
+            :emotion-phase="kaipanlaData?.emotion_phase || eastmoneyData?.market_emotion?.emotion_phase || 'repair'"
+            :emotion-score="kaipanlaData?.emotion_score || eastmoneyData?.market_emotion?.emotion_score || 50"
+            @add-to-holdings="addToHoldings"
+            @view-detail="openChanDetail"
+          />
+
+          <!-- 预警中心 -->
+          <AlertCenter
+            v-if="activeTab === 'alerts'"
+            :emotion-phase="kaipanlaData?.emotion_phase || eastmoneyData?.market_emotion?.emotion_phase || 'repair'"
+          />
+
+          <!-- 二级分析功能（从抽屉打开后显示在主区域） -->
+          <DashboardView
+            v-if="activeTab === 'dashboard'"
+            :analysis-data="analysisData"
+            :eastmoney-data="eastmoneyData"
+            :kaipanla-data="kaipanlaData"
+            @view-stock="openChanDetail"
+            @refresh="crawlData"
+          />
+
+          <!-- 量价分析内容 -->
+          <div v-if="activeTab === 'volume'" class="analysis-content">
             <el-row :gutter="20">
               <el-col :span="12">
                 <el-card>
@@ -204,10 +238,10 @@
                 </el-card>
               </el-col>
             </el-row>
-          </el-tab-pane>
+          </div>
 
           <!-- 技术指标 -->
-          <el-tab-pane label="📊 技术指标" name="indicator">
+          <div v-if="activeTab === 'indicator'" class="analysis-content">
             <el-row :gutter="20">
               <el-col :span="12">
                 <el-card>
@@ -276,10 +310,10 @@
                 </el-card>
               </el-col>
             </el-row>
-          </el-tab-pane>
+          </div>
 
           <!-- 缠论选股 -->
-          <el-tab-pane label="🔮 缠论选股" name="chan">
+          <div v-if="activeTab === 'chan'" class="analysis-content">
             <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center;">
               <el-button type="primary" @click="calcChanIndicators" :loading="chanCalcing">
                 计算缠论指标
@@ -386,10 +420,10 @@
                 </el-card>
               </el-col>
             </el-row>
-          </el-tab-pane>
+          </div>
 
           <!-- 板块资金 -->
-          <el-tab-pane label="💰 板块资金" name="money">
+          <div v-if="activeTab === 'money'" class="analysis-content">
             <el-row :gutter="20">
               <el-col :span="12">
                 <el-card>
@@ -474,10 +508,10 @@
                 </el-card>
               </el-col>
             </el-row>
-          </el-tab-pane>
+          </div>
 
           <!-- 涨跌停 -->
-          <el-tab-pane label="🎯 涨跌停" name="limit">
+          <div v-if="activeTab === 'limit'" class="analysis-content">
             <el-row :gutter="20">
               <el-col :span="12">
                 <el-card>
@@ -517,10 +551,10 @@
                 </el-card>
               </el-col>
             </el-row>
-          </el-tab-pane>
+          </div>
 
           <!-- 形态信号 -->
-          <el-tab-pane label="⚡ 形态信号" name="pattern">
+          <div v-if="activeTab === 'pattern'" class="analysis-content">
             <el-row :gutter="20">
               <el-col :span="12">
                 <el-card>
@@ -594,12 +628,12 @@
                 </el-card>
               </el-col>
             </el-row>
-          </el-tab-pane>
+          </div>
 
           <!-- 东方财富数据 -->
-          <el-tab-pane label="🔥 东财数据" name="eastmoney">
+          <div v-if="activeTab === 'eastmoney'" class="analysis-content">
             <div v-if="!eastmoneyData" style="text-align: center; padding: 50px; color: #909399;">
-              点击"爬取东财"按钮获取数据
+              点击"刷新数据"按钮获取数据
             </div>
             <template v-else>
               <!-- 非交易日提示 -->
@@ -958,8 +992,18 @@
                 </el-col>
               </el-row>
             </template>
-          </el-tab-pane>
-        </el-tabs>
+          </div>
+
+          <!-- 策略分析 -->
+          <div v-if="activeTab === 'strategy'" class="analysis-content">
+            <StrategyAnalysisView
+              :eastmoney-data="eastmoneyData"
+              :current-date="currentDate"
+            />
+          </div>
+
+        </div>
+        <!-- core-content end -->
 
         <!-- 复盘笔记 - 常驻底部 -->
         <el-card style="margin-top: 15px">
@@ -1030,7 +1074,7 @@
           width="80%"
           @close="chanDetailData = {}; trendAnalysis = {}; multiPeriodData = {}"
         >
-          <el-spin :spinning="chanDetailLoading">
+          <div v-loading="chanDetailLoading" style="min-height: 200px;">
             <el-row :gutter="20" v-if="!chanDetailLoading">
               <!-- 基本信息 -->
               <el-col :span="24">
@@ -1071,7 +1115,7 @@
                   <template #header>🔄 背驰</template>
                   <div style="padding: 10px;">
                     <p><strong>类型:</strong> <span :class="trendAnalysis.divergence.is_diverge ? 'text-red' : ''">{{ trendAnalysis.divergence.is_diverge ? trendAnalysis.divergence.type : '无' }}</span></p>
-                    <p><strong>强度:</strong> {{ (trendAnalysis.divergence.strength * 100).toFixed(0) }}%</p>
+                    <p><strong>强度:</strong> {{ ((trendAnalysis.divergence?.strength || 0) * 100).toFixed(0) }}%</p>
                   </div>
                 </el-card>
               </el-col>
@@ -1085,12 +1129,82 @@
                     <el-col :span="8"><p><strong>30m:</strong> {{ multiPeriodData.min30?.type }}</p></el-col>
                     <el-col :span="8"><p><strong>5m:</strong> {{ multiPeriodData.min5?.type }}</p></el-col>
                   </el-row>
-                  <p style="color: #e6a23c; font-weight: bold;">信号: {{ multiPeriodData.signal }} (信心 {{ (multiPeriodData.confidence * 100).toFixed(0) }}%)</p>
+                  <p style="color: #e6a23c; font-weight: bold;">信号: {{ multiPeriodData.signal }} (信心 {{ ((multiPeriodData.confidence || 0) * 100).toFixed(0) }}%)</p>
                 </el-card>
               </el-col>
             </el-row>
-          </el-spin>
+          </div>
         </el-dialog>
+
+        <!-- 更多分析抽屉 -->
+        <el-drawer
+          v-model="showAnalysisDrawer"
+          title="更多分析工具"
+          direction="rtl"
+          size="320px"
+        >
+          <div class="analysis-menu">
+            <div
+              v-for="item in analysisMenuItems"
+              :key="item.name"
+              class="analysis-menu-item"
+              @click="openAnalysis(item.name)"
+            >
+              <span class="menu-icon">{{ item.icon }}</span>
+              <div class="menu-info">
+                <span class="menu-label">{{ item.label }}</span>
+                <span class="menu-desc">{{ item.desc }}</span>
+              </div>
+              <el-icon class="menu-arrow"><ArrowRight /></el-icon>
+            </div>
+          </div>
+        </el-drawer>
+
+        <!-- 设置抽屉 -->
+        <el-drawer
+          v-model="showSettingsDrawer"
+          title="设置"
+          direction="rtl"
+          size="320px"
+        >
+          <div class="settings-panel">
+            <div class="setting-item">
+              <span class="setting-label">数据源</span>
+              <el-select v-model="dataSource" size="small" style="width: 140px">
+                <el-option label="东财/同花顺" value="eastmoney" />
+                <el-option label="Tushare" value="tushare" />
+              </el-select>
+            </div>
+            <div class="setting-item">
+              <span class="setting-label">涨跌颜色</span>
+              <el-switch
+                v-model="useBlueUp"
+                active-text="蓝涨绿跌"
+                inactive-text="红涨绿跌"
+              />
+            </div>
+            <div class="setting-item">
+              <span class="setting-label">自动刷新</span>
+              <el-switch
+                v-model="autoRefresh"
+                @change="toggleAutoRefresh"
+              />
+            </div>
+            <div class="setting-item" v-if="autoRefresh">
+              <span class="setting-label">刷新状态</span>
+              <span v-if="isTradeTime" class="status-text active">
+                {{ refreshInterval }}s后刷新
+              </span>
+              <span v-else class="status-text">非交易时段</span>
+            </div>
+            <el-divider />
+            <div class="setting-item">
+              <el-button type="primary" @click="syncData" :loading="syncing" style="width: 100%">
+                同步全部数据
+              </el-button>
+            </div>
+          </div>
+        </el-drawer>
       </el-main>
     </el-container>
   </div>
@@ -1099,6 +1213,22 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Setting, ArrowRight } from '@element-plus/icons-vue'
+import StrategyAnalysisView from './components/strategy/StrategyAnalysisView.vue'
+import DashboardView from './components/dashboard/DashboardView.vue'
+// 新核心组件
+import TodayDecision from './components/decision/TodayDecision.vue'
+import MyHoldings from './components/holdings/MyHoldings.vue'
+import SmartPicks from './components/picks/SmartPicks.vue'
+import AlertCenter from './components/alerts/AlertCenter.vue'
+import {
+  getTodayOrLastTradingDay,
+  getLastTradingDay,
+  getDatePickerDisabledDate,
+  isTradingDay,
+  getTradingStatusText,
+  formatDateToDisplay,
+} from './utils/tradingDayUtils'
 import {
   getVolumeTop,
   getOversold,
@@ -1138,15 +1268,33 @@ import {
   getTrendAnalysis,
   getMultiPeriodAnalysis,
   scanMarket,
+  getKaipanlaFullEmotion,
+  getFullAnalysis,
 } from './api/stock'
 
-const currentDate = ref(new Date().toISOString().slice(0, 10).replace(/-/g, ''))
+// 初始化为最后一个交易日
+const currentDate = ref(getTodayOrLastTradingDay())
+
+// 日期选择器禁用函数
+const disabledDate = getDatePickerDisabledDate()
+
+// 交易日期状态提示
+const tradingDateStatus = computed(() => {
+  if (!currentDate.value) return ''
+  const dateStr = currentDate.value
+  const date = new Date(dateStr.substring(0, 4), parseInt(dateStr.substring(4, 6)) - 1, dateStr.substring(6, 8))
+  return getTradingStatusText(date)
+})
 const syncing = ref(false)
 const crawling = ref(false)
-const activeTab = ref('volume')
+const activeTab = ref('decision')  // 默认显示今日决策
 const autoRefresh = ref(false)
 const refreshInterval = ref(30)
 const dataSource = ref('eastmoney')
+
+// Dashboard 相关数据
+const analysisData = ref({})
+const kaipanlaData = ref({})
 const useBlueUp = ref(true) // 默认蓝涨
 let refreshTimer = null
 let countdownTimer = null
@@ -1154,6 +1302,46 @@ let countdownTimer = null
 // 涨跌颜色class
 const upClass = computed(() => useBlueUp.value ? 'text-blue' : 'text-red')
 const downClass = computed(() => 'text-green')
+
+// 抽屉状态
+const showAnalysisDrawer = ref(false)
+const showSettingsDrawer = ref(false)
+
+// 核心导航项
+const coreNavItems = [
+  { name: 'decision', label: '今日决策', icon: '🎯' },
+  { name: 'holdings', label: '我的持仓', icon: '💼' },
+  { name: 'picks', label: '智能选股', icon: '🔍' },
+  { name: 'alerts', label: '预警中心', icon: '🔔' }
+]
+
+// 分析菜单项
+const analysisMenuItems = [
+  { name: 'dashboard', label: '市场总览', icon: '🏠', desc: '大盘概况、情绪走势' },
+  { name: 'volume', label: '量价分析', icon: '📈', desc: '成交额、量比、放量' },
+  { name: 'indicator', label: '技术指标', icon: '📊', desc: 'RSI、MACD、KDJ' },
+  { name: 'chan', label: '缠论选股', icon: '🔮', desc: '分型、笔、中枢、买卖点' },
+  { name: 'money', label: '板块资金', icon: '💰', desc: '行业资金、北向、龙虎榜' },
+  { name: 'limit', label: '涨跌停', icon: '🎯', desc: '涨停池、跌停池' },
+  { name: 'pattern', label: '形态信号', icon: '⚡', desc: '突破、缺口、异动' },
+  { name: 'eastmoney', label: '东财数据', icon: '🔥', desc: '爬虫数据详情' },
+  { name: 'strategy', label: '策略分析', icon: '🎯', desc: '多维度策略回测' }
+]
+
+// 打开分析功能
+const openAnalysis = (name) => {
+  activeTab.value = name
+  showAnalysisDrawer.value = false
+}
+
+// 情绪阶段样式
+const getEmotionClass = computed(() => {
+  const phase = eastmoneyData.value?.market_emotion?.emotion_phase
+  if (phase === 'high_tide') return 'emotion-hot'
+  if (phase === 'ice_point') return 'emotion-cold'
+  if (phase === 'ebb_tide') return 'emotion-warning'
+  return 'emotion-normal'
+})
 
 // 数据
 const volumeTop = ref([])
@@ -1291,6 +1479,18 @@ const getIndexName = (code) => {
 const formatNumber = (num) => num ? (num / 10000).toFixed(0) + '万' : '-'
 const formatAmount = (num) => num ? (num / 10000).toFixed(0) + '万' : '-'
 
+// 导航到指定标签页
+const navigateToTab = (tabName) => {
+  activeTab.value = tabName
+}
+
+// 添加到持仓
+const addToHoldings = (stock) => {
+  // 切换到持仓页面，数据由持仓组件处理
+  activeTab.value = 'holdings'
+  ElMessage.success(`已将 ${stock.name} 添加到持仓，请在持仓页面完善信息`)
+}
+
 // 加载数据
 const loadData = async () => {
   try {
@@ -1373,10 +1573,65 @@ const crawlData = async () => {
       ElMessage.success('东财/同花顺数据爬取完成')
     }
     eastmoneyData.value = data
+
+    // 同时加载开盘啦数据
+    try {
+      const kplData = await getKaipanlaFullEmotion(currentDate.value)
+      kaipanlaData.value = kplData || {}
+    } catch (kplErr) {
+      console.warn('开盘啦数据加载失败:', kplErr)
+    }
+
+    // 加载策略分析数据
+    try {
+      const emotionInput = buildEmotionInput()
+      const marketInput = buildMarketInput()
+      const analysis = await getFullAnalysis(emotionInput, marketInput, [])
+      analysisData.value = analysis || {}
+    } catch (analysisErr) {
+      console.warn('策略分析失败:', analysisErr)
+    }
   } catch (err) {
     ElMessage.error('爬取失败: ' + err.message)
   } finally {
     crawling.value = false
+  }
+}
+
+// 构建情绪输入数据
+const buildEmotionInput = () => {
+  const data = eastmoneyData.value || {}
+  const kpl = kaipanlaData.value || {}
+
+  return {
+    limit_up_count: kpl.limit_up?.count || data.limit_up_down?.limit_up_count || 0,
+    max_continuous: kpl.continuous_ladder?.max_height || 0,
+    up_ratio: (data.market_emotion?.up_ratio || 50) / 100,
+    broken_count: kpl.broken_board?.count || 0,
+    total_limit_up_attempt: (kpl.limit_up?.count || 0) + (kpl.broken_board?.count || 0),
+    yesterday_score: 50
+  }
+}
+
+// 构建市场输入数据
+const buildMarketInput = () => {
+  const data = eastmoneyData.value || {}
+  const sectors = data.sector_flow || []
+
+  return {
+    box_pos: 50,
+    pct_chg: data.sector_strength?.market_chg || 0,
+    north_flow: data.north_flow?.total || 0,
+    north_flow_avg_5d: 0,
+    up_sectors: sectors.filter(s => s.pct_chg > 0).length,
+    down_sectors: sectors.filter(s => s.pct_chg < 0).length,
+    vol_ratio: 1.0,
+    sector_avg_pct_chg: sectors.reduce((sum, s) => sum + (s.pct_chg || 0), 0) / sectors.length || 0,
+    sectors: sectors.slice(0, 10).map(s => ({
+      name: s.name,
+      pct_chg: s.pct_chg,
+      main_net: s.main_net
+    }))
   }
 }
 
@@ -1524,20 +1779,240 @@ onUnmounted(() => {
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: #f5f7fa;
+  background: linear-gradient(135deg, #0f1419 0%, #1a252f 100%);
+  min-height: 100vh;
 }
 
 .app-container {
   min-height: 100vh;
+  color: #fff;
 }
 
-.el-header {
-  background: #fff;
+/* 新版头部样式 */
+.app-header {
+  background: linear-gradient(135deg, #1a252f 0%, #243447 100%);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  padding: 0 24px;
+  height: 60px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.app-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.market-quick-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.info-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.info-label {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.info-value {
+  font-weight: 600;
+}
+
+.info-value.up {
+  color: #ff4d4f;
+}
+
+.info-value.down {
+  color: #00b96b;
+}
+
+.info-value.emotion-hot {
+  color: #ff4d4f;
+}
+
+.info-value.emotion-cold {
+  color: #1890ff;
+}
+
+.info-value.emotion-warning {
+  color: #faad14;
+}
+
+.info-value.emotion-normal {
+  color: #00b96b;
+}
+
+.info-divider {
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 主内容区 */
+.app-main {
+  padding: 20px 24px;
+  background: transparent;
+}
+
+/* 核心导航 */
+.core-nav {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: linear-gradient(135deg, #1a252f 0%, #243447 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.nav-item:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
+}
+
+.nav-item.active {
+  background: linear-gradient(135deg, #00b96b 0%, #52c41a 100%);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(0, 185, 107, 0.3);
+}
+
+.nav-icon {
+  font-size: 18px;
+}
+
+.nav-label {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.nav-item.more-btn {
+  margin-left: auto;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.nav-item.more-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.arrow-icon {
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+/* 核心内容区 */
+.core-content {
+  background: linear-gradient(135deg, #1a252f 0%, #243447 100%);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  min-height: calc(100vh - 180px);
+  overflow: hidden;
+}
+
+/* 分析菜单样式 */
+.analysis-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.analysis-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.analysis-menu-item:hover {
+  background: rgba(0, 185, 107, 0.1);
+}
+
+.menu-icon {
+  font-size: 24px;
+}
+
+.menu-info {
+  flex: 1;
+}
+
+.menu-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 2px;
+}
+
+.menu-desc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.menu-arrow {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+/* 设置面板样式 */
+.settings-panel {
+  padding: 8px 0;
+}
+
+.setting-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+}
+
+.setting-label {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.status-text {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.status-text.active {
+  color: #00b96b;
+}
+
+/* 保留旧样式兼容 */
+.el-header {
+  background: transparent;
 }
 
 .el-header h1 {
@@ -1551,20 +2026,18 @@ body {
 }
 
 .market-index-bar {
-  display: flex;
-  gap: 25px;
-  padding: 12px 20px;
-  background: #fff;
-  border-radius: 8px;
-  margin-bottom: 15px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  font-size: 14px;
+  display: none;
 }
 
 .index-item {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* 分析内容区样式 */
+.analysis-content {
+  padding: 20px;
 }
 
 .index-name {
@@ -1582,6 +2055,11 @@ body {
 
 .el-tabs--card > .el-tabs__header {
   margin-bottom: 15px;
+}
+
+/* 修复 Tab 切换时内容显示问题 - Element Plus 兼容 */
+.main-tabs :deep(.el-tabs__content) {
+  overflow: visible;
 }
 
 .text-red {

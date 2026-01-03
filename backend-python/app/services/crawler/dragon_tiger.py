@@ -15,6 +15,22 @@ class DragonTigerCrawler(BaseCrawler):
         Returns:
             龙虎榜股票列表
         """
+        # 尝试多个reportName方案，从新到旧
+        report_names = [
+            "RPT_DAILYBILLBOARD_DETAILSNEW",  # 新版本（2024+）
+            "RPT_DAILYBILLBOARD_DETAILS",      # 旧版本（备选）
+        ]
+
+        for report_name in report_names:
+            result = await self._crawl_with_report(trade_date, report_name)
+            if result:
+                return result
+
+        logger.warning(f"Failed to crawl dragon tiger from all sources for {trade_date}")
+        return []
+
+    async def _crawl_with_report(self, trade_date: str, report_name: str) -> List[Dict]:
+        """使用指定reportName爬取龙虎榜数据"""
         dragon_tiger_list = []
 
         try:
@@ -23,7 +39,7 @@ class DragonTigerCrawler(BaseCrawler):
 
             url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
             params = {
-                "reportName": "RPT_DAILYBILLBOARD_DETAILSNEW",
+                "reportName": report_name,
                 "columns": "ALL",
                 "filter": f"(TRADE_DATE='{formatted_date}')",
                 "pageNumber": 1,
@@ -35,17 +51,17 @@ class DragonTigerCrawler(BaseCrawler):
             data = await self.get(url, params, retry=False)
 
             if not data or not isinstance(data, dict):
-                logger.warning(f"Dragon tiger API returned invalid data for {trade_date}")
+                logger.debug(f"Invalid response for {report_name} on {trade_date}")
                 return []
 
             result = data.get("result", {})
             if not result or not isinstance(result, dict):
-                logger.warning(f"No result in dragon tiger API response for {trade_date}")
+                logger.debug(f"No result in response for {report_name} on {trade_date}")
                 return []
 
             items = result.get("data", [])
             if not items:
-                logger.info(f"No dragon tiger data for {trade_date}")
+                logger.debug(f"No dragon tiger data for {report_name} on {trade_date}")
                 return []
 
             for item in items:
@@ -66,9 +82,12 @@ class DragonTigerCrawler(BaseCrawler):
                     logger.warning(f"Failed to parse dragon tiger item: {e}")
                     continue
 
-            logger.info(f"Crawled {len(dragon_tiger_list)} dragon tiger records for {trade_date}")
-            return dragon_tiger_list
+            if dragon_tiger_list:
+                logger.info(f"Crawled {len(dragon_tiger_list)} dragon tiger records for {trade_date} using {report_name}")
+                return dragon_tiger_list
+
+            return []
 
         except Exception as e:
-            logger.error(f"Failed to crawl dragon tiger: {e}")
+            logger.debug(f"Failed to crawl dragon tiger with {report_name}: {e}")
             return []

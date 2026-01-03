@@ -24,4 +24,8 @@ api_router.include_router(strategy.router)
 from . import emotion
 api_router.include_router(emotion.router)
 
+# 今日决策综合接口 (v2.6 新增)
+from . import today_overview
+api_router.include_router(today_overview.router)
+
 __all__ = ["api_router"]
